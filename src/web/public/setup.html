@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>接入机器人 · tab-ai</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <main class="setup-page">
+      <header>
+        <a class="brand" href="/"
+          ><span class="mark">T/</span><span>tab-ai<small>TASK · AGENT · BOT</small></span></a
+        ><a class="setup-link" href="/">返回工作台 ↗</a>
+      </header>
+      <p class="brand-slogan">
+        Every task evolves. Any agent runs it (Codex, OpenCode, Claude Code…); any bot drives it
+        (Feishu, WeCom, DingTalk, WeChat…).
+      </p>
+      <div class="eyebrow">CONNECT YOUR CHAT</div>
+      <h1>把 Agent 接到你的聊天工具。</h1>
+      <p class="setup-intro">
+        选择平台，按提示授权和配对。凭证与用户 ID 由向导保存，无需编辑配置文件。
+      </p>
+      <ol class="setup-steps">
+        <li id="step-one" class="current">01 选择平台</li>
+        <li id="step-two">02 授权与连接</li>
+        <li id="step-three">03 配对与确认</li>
+      </ol>
+      <div id="setup-error" class="error" role="alert" hidden></div>
+      <section id="setup-form-section" class="setup-panel">
+        <form id="setup-form">
+          <div class="setup-grid">
+            <label
+              >聊天平台<select id="platform">
+                <option value="lark">飞书 / Lark</option>
+                <option value="dingtalk">钉钉</option>
+                <option value="wecom">企业微信</option>
+                <option value="wechat">微信（个人微信）</option>
+              </select></label
+            ><label>接入方式<select id="method"></select></label>
+          </div>
+          <label
+            >会话管理权限<select id="bot-role">
+              <option value="scoped">普通 BOT：仅自身上下文与子会话</option>
+              <option value="manager">Manager：已绑定用户可管理本实例全部会话</option>
+            </select></label
+          >
+          <label id="domain-label"
+            >区域<select id="domain">
+              <option value="feishu">飞书（中国版）</option>
+              <option value="lark">Lark（国际版）</option>
+            </select></label
+          >
+          <div id="qr-intro" class="setup-note">
+            使用飞书官方授权流程创建新应用。下一步会显示二维码和链接，在手机或电脑上确认即可取得凭证。平台确认页上的实际权限请自行核对。
+          </div>
+          <div id="manual-fields" hidden>
+            <details open>
+              <summary>按提示在平台准备机器人</summary>
+              <ol id="guide-steps"></ol>
+              <a id="platform-link" target="_blank" rel="noopener noreferrer">打开平台后台 ↗</a>
+            </details>
+            <div class="setup-grid">
+              <label
+                ><span id="credential-id-label">App ID</span
+                ><input id="credential-id" autocomplete="off" maxlength="512" /></label
+              ><label
+                ><span id="credential-secret-label">App Secret</span
+                ><input id="credential-secret" type="password" autocomplete="off" maxlength="4096"
+              /></label>
+            </div>
+            <label id="card-template-label" hidden
+              >钉钉卡片模板 ID（可选）<input
+                id="card-template-id"
+                autocomplete="off"
+                maxlength="200"
+              /><small>按 docs/chat-interactions.md 准备模板；留空使用文字回答。</small></label
+            >
+          </div>
+          <p class="footnote">
+            凭证只存储在运行 tab-ai
+            的服务器上。未完成接入的凭证会保留为受保护的草稿，便于继续；不会提前启用机器人。
+          </p>
+          <button id="begin" type="submit" class="primary">扫码创建并接入 ↗</button>
+        </form>
+      </section>
+      <section id="setup-progress" class="setup-panel" hidden aria-live="polite">
+        <div id="phase" class="eyebrow"></div>
+        <h2 id="progress-title">正在连接</h2>
+        <p id="progress-message"></p>
+        <div id="authorization" hidden>
+          <img id="auth-qr" alt="平台授权二维码" hidden />
+          <p>
+            <a id="authorization-link" target="_blank" rel="noopener noreferrer">打开授权链接 ↗</a>
+          </p>
+          <p class="footnote">
+            授权链接仅用于本次接入，请勿转发。即使服务器没有显示器，也可以用手机扫码。
+          </p>
+        </div>
+        <div id="setup-permission" class="setup-note" hidden>
+          <h3>申请机器人权限</h3>
+          <p>
+            已有应用需一并开通群消息权限，并发布版本、完成管理员审核。群模式仍默认仅
+            @，不会自动开启群回复。
+          </p>
+          <p>
+            <a id="setup-permission-link" target="_blank" rel="noopener noreferrer"
+              >打开当前应用的权限申请入口 ↗</a
+            >
+          </p>
+          <img id="setup-permission-qr" alt="当前应用权限申请二维码" width="240" height="240" />
+        </div>
+        <form id="verify-form" hidden>
+          <label
+            >微信手机端显示的验证码<input
+              id="verify-code"
+              maxlength="128"
+              autocomplete="one-time-code"
+              required /></label
+          ><button id="submit-verify" type="submit">提交验证码</button>
+        </form>
+        <div id="pairing" hidden>
+          <p>在机器人<strong>私聊</strong>中发送下面的命令：</p>
+          <pre id="pair-command"></pre>
+          <button id="copy-pair" type="button">复制配对命令</button>
+          <p class="footnote">
+            不要发送到群聊。向导会自动识别你的用户 ID，并检测机器人是否成功回传消息。
+          </p>
+        </div>
+        <div id="identity" class="setup-note" hidden>
+          <p id="paired-user"></p>
+          <p>确认绑定后，该用户可以通过此机器人操作本机 agent。请核对机器人和配对账号。</p>
+          <button id="confirm-pair" class="primary">确认绑定并启用</button>
+        </div>
+        <p id="deadline" class="footnote"></p>
+        <div class="setup-actions">
+          <button id="cancel-setup">取消接入</button
+          ><button id="restart-setup" hidden>返回，继续配置</button
+          ><a id="finish-setup" class="setup-link" href="/" hidden>进入工作台 ↗</a>
+        </div>
+      </section>
+      <p class="footnote">
+        飞书、企业微信支持扫码创建 /
+        授权并自动获取凭证；钉钉需要先在平台开通机器人，再填写凭证。个人微信支持扫码登录和文字私聊。
+      </p>
+    </main>
+    <dialog id="auth-dialog">
+      <form id="auth-form">
+        <div class="eyebrow">LOCAL ACCESS</div>
+        <h2>连接服务器上的 tab-ai</h2>
+        <p>运行 <code>tab-ai dashboard --setup</code> 获取专属链接，或粘贴本地访问令牌。</p>
+        <label>访问令牌<input id="token-input" type="password" autocomplete="off" required /></label
+        ><button class="primary wide" type="submit">连接</button>
+      </form>
+    </dialog>
+    <script src="/setup.js" type="module"></script>
+  </body>
+</html>

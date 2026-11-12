@@ -1,0 +1,370 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>tab-ai · Agent 工作台</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <div class="shell">
+      <aside>
+        <a class="brand" href="/"
+          ><span class="mark">T/</span><span>tab-ai<small>TASK · AGENT · BOT</small></span></a
+        >
+        <nav id="navigation" aria-label="Main navigation"></nav>
+        <div class="new-actions"><button id="new" class="primary wide">＋ 新建任务</button></div>
+        <a class="setup-link" href="/setup">接入机器人 ↗</a>
+        <button
+          id="toggle-browser"
+          class="mobile-browser-toggle"
+          aria-expanded="true"
+          aria-controls="session-browser"
+        >
+          切换任务 ▾
+        </button>
+        <section id="session-browser" class="session-browser">
+          <div class="section-label">任务 <span id="count">0</span></div>
+          <div id="session-filters" class="session-filters"></div>
+          <div id="sessions" class="session-list" role="list" aria-label="任务列表"></div>
+        </section>
+        <div class="aside-bottom"><p class="footnote">原生 Agent · 共享工作目录</p></div>
+      </aside>
+      <main>
+        <header>
+          <div>
+            <div id="page-eyebrow" class="eyebrow">TAB-AI / OVERVIEW</div>
+            <h1 id="title">你的 Agent，原生运行。</h1>
+            <p id="subtitle">从终端到团队聊天，让工作保持连续。</p>
+          </div>
+          <div class="connection">
+            <i id="connection-dot"></i><span id="connection-label">连接中</span>
+          </div>
+        </header>
+        <p class="brand-slogan">
+          Every task evolves. Any agent runs it (Codex, OpenCode, Claude Code…); any bot drives it
+          (Feishu, WeCom, DingTalk, WeChat…).
+        </p>
+        <div id="error" class="error" role="alert" hidden></div>
+        <section id="overview-page">
+          <div id="metrics" class="metrics"></div>
+          <div class="panel-heading">
+            <h2>最近的顶层任务</h2>
+            <button id="overview-create-task" class="primary">＋ 新建任务</button>
+          </div>
+          <div id="recent-tasks" class="root-grid"></div>
+          <div class="panel-heading">
+            <h2>需要你处理</h2>
+            <span class="muted">问题与审批</span>
+          </div>
+          <div id="attention"></div>
+        </section>
+        <section id="task-context" hidden>
+          <div id="task-breadcrumbs" class="breadcrumbs" aria-label="任务路径"></div>
+          <div class="session-hierarchy-actions">
+            <button id="create-child-session" class="primary" type="button">＋ 新增子任务</button>
+          </div>
+          <div class="task-context-bar">
+            <div id="task-states"></div>
+            <div id="task-tabs" class="task-tabs" aria-label="任务视图"></div>
+          </div>
+        </section>
+        <section id="task-detail" class="task-detail" hidden></section>
+        <section id="records-panel" class="records-panel" hidden>
+          <div class="panel-heading">
+            <h2>审批与执行</h2>
+            <span class="muted">当前任务的持久记录</span>
+          </div>
+          <div id="records-pending"></div>
+          <div class="records-toolbar">
+            <div id="records-kinds" class="task-tabs" aria-label="记录类型"></div>
+            <label class="sr-only" for="records-search">按记录 ID 或关键词搜索</label
+            ><input
+              id="records-search"
+              type="search"
+              maxlength="200"
+              placeholder="审批 ID、轮次 ID、工具 ID 或关键词"
+            /><button id="approval-policy-open" type="button">审批策略 / 清除授权</button
+            ><button id="records-refresh" type="button">刷新记录</button>
+          </div>
+          <p id="records-usage" class="footnote"></p>
+          <p id="records-note" class="footnote" role="status"></p>
+          <div id="records-list"></div>
+          <button id="records-more" type="button" hidden>加载更早记录</button>
+        </section>
+        <section id="session-pending" class="empty-inline" hidden>
+          此任务尚未创建会话，可先查看目标和子任务。
+        </section>
+        <section id="agent-plans-panel" class="records-panel" hidden>
+          <div class="panel-heading">
+            <h2>Agent 待办</h2>
+            <button id="agent-plans-refresh" type="button">刷新待办</button>
+          </div>
+          <p class="footnote">查看原生 Agent 的执行步骤与完成进度；子任务关系请查看“任务结构”。</p>
+          <div id="agent-plans-filters" class="task-tabs" role="group" aria-label="待办状态"></div>
+          <p id="agent-plans-note" class="footnote" role="status"></p>
+          <div id="agent-plans-list"></div>
+          <button id="agent-plans-more" type="button" hidden>加载更早计划</button>
+        </section>
+        <section id="agents-page" hidden>
+          <div class="panel-heading">
+            <h2>原生 Agents</h2>
+            <span class="muted">执行者、原生配置与能力</span>
+          </div>
+          <div id="agents" class="bot-grid"></div>
+        </section>
+        <section id="bots-page" hidden>
+          <div class="panel-heading">
+            <h2>已接入机器人</h2>
+            <a class="button-link primary" href="/setup">＋ 接入机器人</a>
+          </div>
+          <div id="channels" class="bot-grid"></div>
+        </section>
+        <section id="empty" class="empty">
+          <div class="large-mark">T/</div>
+          <h2>从一个任务开始，逐层推进。</h2>
+          <p>
+            启动 Codex、Claude Code 或 OpenCode，会话、工具与配置仍留在本机。<br />需要完整终端交互时，随时交回原生
+            CLI。
+          </p>
+          <button id="empty-new" class="primary">创建第一个任务 ↗</button>
+          <div class="principles">
+            <span>01 / 原文透传</span><span>02 / 原生审批</span><span>03 / 会话可恢复</span>
+          </div>
+        </section>
+        <section id="workspace" hidden>
+          <div class="toolbar">
+            <div>
+              <span id="agent" class="tag"></span><span id="status" class="status"></span
+              ><span id="source" class="source"></span>
+            </div>
+            <div class="actions">
+              <button id="native">交回终端 ↗</button
+              ><button id="attach" hidden>已退出终端，交回</button
+              ><button id="open-session" hidden>恢复对话</button
+              ><button id="close-session">关闭对话</button
+              ><button id="stop" class="danger" disabled>停止</button>
+            </div>
+          </div>
+          <div class="toolbar">
+            <span id="session-settings-summary">沿用原生配置</span>
+            <div class="actions">
+              <button id="approval-policy-quick">审批策略</button
+              ><button id="workspace-settings">切换工作目录</button
+              ><button id="session-settings">模型 / 思考</button
+              ><button id="reset-session">重置上下文</button
+              ><button id="compact-session">压缩会话</button
+              ><button id="session-loops">循环管理</button>
+            </div>
+          </div>
+          <details id="session-instructions">
+            <summary>执行附加指令</summary>
+            <p class="footnote">首次任务开始后固定，恢复后继续使用；不属于对话消息。</p>
+            <pre id="instructions-text"></pre>
+          </details>
+          <div id="native-info" class="native-info" hidden></div>
+          <aside id="initial-task" class="initial-task" hidden>
+            <details>
+              <summary>待初始化：已保存的首个任务</summary>
+              <p id="initial-task-text"></p>
+            </details>
+            <button id="begin-session" class="primary">确认并开始任务</button>
+          </aside>
+          <div id="im-entry-status" class="im-entry-notice" hidden>
+            <p id="im-entry-note"></p>
+            <button id="im-entry-open">补建原 BOT 的任务话题</button>
+          </div>
+          <div id="messages" class="messages" aria-live="polite"></div>
+          <div id="conversation-interactions"><div id="interactions"></div></div>
+          <form id="composer">
+            <div id="compose-target" class="compose-target"></div>
+            <label for="prompt" class="sr-only">发送给 Agent 的原文</label
+            ><textarea id="prompt" placeholder="告诉 Agent 你想做什么…" rows="3"></textarea>
+            <div class="composer-bottom">
+              <span id="compose-hint">原文发送 · 不附加管理提示词</span
+              ><button id="send" class="primary" type="submit">发送 ↗</button>
+            </div>
+          </form>
+        </section>
+      </main>
+    </div>
+    <dialog id="approval-policy-dialog">
+      <form id="approval-policy-form">
+        <h2>本会话审批策略</h2>
+        <p id="approval-policy-target"></p>
+        <label
+          >原生审批策略<select
+            id="approval-policy-mode"
+            aria-describedby="approval-policy-description"
+          ></select
+        ></label>
+        <p id="approval-policy-description" role="status"></p>
+        <p class="footnote">
+          策略决定何时询问；单次审批卡片决定本次或本会话内的原生授权范围。没有通用的“允许所有工具”决定。仅此
+          session 生效，策略与沙箱权限分开。临时授权不写入共享配置，关闭、重置或重启后失效。
+        </p>
+        <p id="approval-policy-error" class="form-error" role="alert"></p>
+        <div class="dialog-actions">
+          <button id="approval-policy-cancel" type="button">关闭</button
+          ><button id="approval-policy-revoke" type="button">仅清除临时授权</button
+          ><button id="approval-policy-save" class="primary" type="submit">保存策略</button>
+        </div>
+      </form>
+    </dialog>
+    <dialog id="im-entry-dialog">
+      <h2>补建当前任务的 IM 话题</h2>
+      <p id="im-entry-target"></p>
+      <p>
+        仅在原 BOT、原聊天补建入口，保留当前任务和
+        Session。若之前创建结果未知，请先核对原群，避免重复话题。
+      </p>
+      <label id="im-entry-check-label"
+        ><input id="im-entry-check" type="checkbox" />我已核对原群，需要补建入口</label
+      >
+      <p id="im-entry-error" class="form-error" role="alert"></p>
+      <div class="dialog-actions">
+        <button id="im-entry-cancel">取消</button
+        ><button id="im-entry-confirm" class="primary">补建入口</button>
+      </div>
+    </dialog>
+    <dialog id="reset-dialog">
+      <h2>重置当前会话上下文</h2>
+      <p id="reset-target"></p>
+      <p>
+        将重置本节点的原生 Agent 上下文，保留目录、模型、附加指令与框架历史。任务节点保留任务和
+        Session ID；普通会话会创建新会话并保留旧记录。若希望总结后继续原上下文，请使用压缩。
+      </p>
+      <p id="reset-error" class="form-error" role="alert"></p>
+      <div class="dialog-actions">
+        <button id="reset-cancel" type="button">取消</button
+        ><button id="reset-confirm" type="button" class="danger" disabled>确认重置</button>
+      </div>
+    </dialog>
+    <dialog id="maintenance-dialog">
+      <h2 id="maintenance-title">会话管理</h2>
+      <p id="maintenance-target"></p>
+      <p id="maintenance-description" class="footnote"></p>
+      <div id="maintenance-items"></div>
+      <p id="maintenance-error" class="form-error" role="alert"></p>
+      <div class="dialog-actions">
+        <button id="maintenance-close" type="button">关闭</button
+        ><button id="maintenance-refresh" type="button">刷新</button
+        ><button id="maintenance-start" class="primary" type="button" hidden>开始压缩</button>
+      </div>
+    </dialog>
+    <dialog id="auth-dialog">
+      <form id="auth-form">
+        <div class="eyebrow">LOCAL ACCESS</div>
+        <h2>连接你的本地工作台</h2>
+        <p>
+          在终端运行 <code>tab-ai dashboard</code> 打开专属链接，或粘贴本地 token 文件中的访问令牌。
+        </p>
+        <label for="token-input">访问令牌</label
+        ><input id="token-input" type="password" autocomplete="off" required /><button
+          class="primary wide"
+          type="submit"
+        >
+          连接
+        </button>
+      </form>
+    </dialog>
+    <dialog id="workspace-dialog">
+      <form id="workspace-form">
+        <h2>切换当前聊天工作目录</h2>
+        <p id="workspace-target"></p>
+        <label>新工作目录或别名<input id="workspace-path" required maxlength="4096" /></label>
+        <p>
+          保留当前会话、原生上下文和设置，下一轮使用新目录。不支持保留上下文的 Agent
+          会明确提示；不会创建空白上下文或影响其他聊天。
+        </p>
+        <p id="workspace-error" class="form-error" role="alert"></p>
+        <div class="dialog-actions">
+          <button id="workspace-cancel" type="button">取消</button
+          ><button id="workspace-save" class="primary" type="submit">切换目录</button>
+        </div>
+      </form>
+    </dialog>
+    <dialog id="settings-dialog">
+      <form id="settings-form">
+        <h2>会话模型 / 思考深度</h2>
+        <p id="settings-target" class="footnote"></p>
+        <p id="settings-message" role="status"></p>
+        <label>模型<select id="settings-model" required></select></label
+        ><label id="settings-effort-label">思考深度<select id="settings-effort"></select></label>
+        <p class="footnote">
+          仅修改此会话，从下一轮生效。设置不会成为 Agent 对话消息，也不会修改全局配置。
+        </p>
+        <div class="dialog-actions">
+          <button type="button" id="settings-cancel">取消</button
+          ><button type="submit" id="settings-save" class="primary">保存设置</button>
+        </div>
+      </form>
+    </dialog>
+    <dialog id="task-dialog">
+      <form id="task-form">
+        <div class="eyebrow">TASK ORCHESTRATION</div>
+        <h2 id="task-form-title">新建任务</h2>
+        <p id="task-form-note"></p>
+        <label>标题<input id="task-title-input" required maxlength="60" /></label
+        ><label id="task-source-label">IM 入口来源<select id="task-source"></select></label
+        ><label
+          >Agent<select id="task-agent">
+            <option value="codex">Codex</option>
+            <option value="claude">Claude Code</option>
+            <option value="opencode">OpenCode</option>
+          </select></label
+        ><label id="task-workspace-label"
+          >工作目录或别名<input id="task-workspace-input" maxlength="4096" /></label
+        ><label
+          >任务目标<textarea id="task-objective-input" rows="4" maxlength="8000"></textarea></label
+        ><label
+          >验收标准<textarea
+            id="task-criteria-input"
+            rows="2"
+            maxlength="4000"
+            required
+          ></textarea></label
+        ><label id="task-context-label"
+          >交给子任务的必要资料<textarea
+            id="task-context-input"
+            rows="3"
+            maxlength="16000"
+          ></textarea></label
+        ><label class="task-start-option"
+          ><input id="task-start-now" type="checkbox" />创建后立即执行</label
+        >
+        <p class="footnote">未勾选时只建立任务，等待补充目标或发送第一条要求。</p>
+        <p id="task-form-error" class="form-error" role="alert"></p>
+        <div class="dialog-actions">
+          <button id="task-cancel-form" type="button">取消</button
+          ><button id="task-save" class="primary" type="submit">创建任务</button>
+        </div>
+      </form>
+    </dialog>
+    <dialog id="bot-dialog">
+      <form id="bot-form">
+        <h2>机器人设置</h2>
+        <label>本机显示名称<input id="bot-name" required maxlength="80" /></label
+        ><label>新会话默认目录<input id="bot-workspace" required maxlength="4096" /></label>
+        <p>
+          名称用于工作台显示，不修改平台上的应用名称。目录仅作用于此 BOT
+          之后创建的会话，已有任务不迁移。
+        </p>
+        <p id="bot-form-error" class="form-error" role="alert"></p>
+        <div class="dialog-actions">
+          <button id="bot-cancel-form" type="button">取消</button
+          ><button id="bot-save" class="primary" type="submit">保存设置</button>
+        </div>
+      </form>
+    </dialog>
+    <dialog id="confirm-dialog">
+      <h2>取消任务</h2>
+      <p id="confirm-text"></p>
+      <div class="dialog-actions">
+        <button id="confirm-no" type="button">返回</button
+        ><button id="confirm-yes" class="danger" type="button">确认取消</button>
+      </div>
+    </dialog>
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>

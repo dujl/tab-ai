@@ -1,0 +1,42 @@
+{
+  "dataDir": "data",
+  "port": 4317,
+  "defaultAgent": "codex",
+  "defaultInstructions": "",
+  "defaultWorkspace": "default",
+  "workspaces": { "default": "." },
+  "agents": {
+    "codex": { "command": "codex" },
+    "claude": {},
+    "opencode": { "command": "opencode" }
+  },
+  "maxConcurrentRuns": 4,
+  "turnTimeoutMs": 1800000,
+  "interactionTimeoutMs": 600000,
+  "channels": [
+    {
+      "id": "feishu-main",
+      "type": "lark",
+      "appIdEnv": "TAB_AI_LARK_APP_ID",
+      "appSecretEnv": "TAB_AI_LARK_APP_SECRET",
+      "botOpenId": "ou_REPLACE_WITH_BOT_OPEN_ID",
+      "allowedUsers": ["ou_REPLACE_WITH_YOUR_OPEN_ID"],
+      "domain": "feishu"
+    },
+    {
+      "id": "dingtalk-main",
+      "type": "dingtalk",
+      "clientIdEnv": "TAB_AI_DING_CLIENT_ID",
+      "clientSecretEnv": "TAB_AI_DING_CLIENT_SECRET",
+      "allowedUsers": ["REPLACE_WITH_STAFF_ID"]
+    },
+    {
+      "id": "wecom-main",
+      "type": "wecom",
+      "botIdEnv": "TAB_AI_WECOM_BOT_ID",
+      "contextGroups": [],
+      "secretEnv": "TAB_AI_WECOM_SECRET",
+      "allowedUsers": ["REPLACE_WITH_USERID"]
+    }
+  ]
+}

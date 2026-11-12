@@ -1,0 +1,21 @@
+node_modules/
+dist/
+.tab-ai/
+.env
+*.log
+.DS_Store
+
+.tab-ai-build-*/
+
+# Local configuration, test coverage and distribution archives
+.env.*
+!.env.example
+/data/
+/tab-ai.config.json
+coverage/
+*.tgz
+*.sqlite*
+*.db
+*.db-*
+*.pem
+*.key

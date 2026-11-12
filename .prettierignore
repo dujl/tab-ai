@@ -1,0 +1,7 @@
+node_modules/
+dist/
+.tab-ai/
+.tab-ai-build-*/
+coverage/
+*.log
+.env
