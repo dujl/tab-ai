@@ -46,7 +46,7 @@ const titles: Record<string, string> = {
   new: '新建会话',
   init: '初始化会话',
   rename: '会话名称',
-  'group-mode': '群接收模式',
+  'group-mode': '群聊响应',
   'bot-role': '机器人权限',
   manage: '会话管理',
 };

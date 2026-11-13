@@ -848,13 +848,27 @@ export class Manager {
       { kind: 'chat', source, message },
     );
     const permission = result.permission;
-    const text = `【tab-ai 系统 · 本群行为模式】\n群 ID：${result.chatId}\n模式：${result.mode} · ${groupModeNames[result.mode]}\n${intent.intent === 'group_mode.set' ? `原模式：${result.previousMode}\n群模式配置已保存。\n` : ''}${permission ? `权限状态：${permission.status === 'ready' ? '已验证' : permission.status === 'missing' ? '等待申请／审核生效' : '尚未确认'}\n${permission.message}\n${permission.url && permission.status !== 'ready' ? `权限申请链接：${permission.url}\n完成申请、发布和审核后，点击“重新检查权限”；无需重设模式。\n` : ''}` : groupModePermissionHint + '\n'}全量模式会保存本群成员近期消息作为参考；执行任务仍限已授权用户。`;
+    const text = `【tab-ai 系统 · 本群行为模式】\n群 ID：${result.chatId}\n模式：${result.mode} · ${groupModeNames[result.mode]}\n${intent.intent === 'group_mode.set' ? `原模式：${result.previousMode}\n群模式配置已保存。\n` : ''}${permission ? `权限状态：${permission.status === 'ready' ? '已验证' : permission.status === 'missing' ? '等待申请／审核生效' : '尚未确认'}\n${permission.message}\n${permission.url && permission.status !== 'ready' ? `权限申请链接：${permission.url}\n完成申请、发布和审核后，点击“重新检查权限”；无需重设模式。\n` : ''}` : groupModePermissionHint + '\n'}此设置作用于当前 BOT 的整个群，包括主会话和子话题。免 @ 响应仅对已授权用户生效；全量模式会保存本群成员近期消息作为参考。`;
     return this.sendManagement(
       message,
       text,
       current?.id,
       'group-mode',
       [
+        ...(
+          [
+            ['auto', '开启免 @ 响应'],
+            ['context', '接收全部，仅 @ 回复'],
+            ['mention', '仅接收 @ 消息'],
+          ] as const
+        ).map(([mode, label]) => ({
+          label: result.mode === mode ? `${label}（当前）` : label,
+          command: `/tab group-mode ${mode}`,
+          mutation: true,
+          ...(result.mode === mode
+            ? { disabledReason: '当前已配置此模式；平台权限可通过下方按钮重新检查。' }
+            : {}),
+        })),
         {
           label: permission && permission.status !== 'ready' ? '重新检查权限' : '刷新群模式',
           command: '/tab group-mode',
@@ -3465,15 +3479,26 @@ export class Manager {
       buttons = buttons.filter(
         (b) => b.command !== '/tab todos' || (!!current && this.agentPlansSupported(current.id)),
       );
+      const showGroupMode =
+        message.route.platform === 'lark' && !!message.groupMessage && message.direct !== true;
+      if (showGroupMode && (!args[0] || args[0] === 'advanced' || args[0] === 'more'))
+        buttons.push({
+          label: this.groupMode(message) === 'auto' ? '群聊免 @：已开启' : '群聊免 @：未开启',
+          command: '/tab group-mode',
+          group: 'secondary',
+        });
       return this.sendManagement(
         message,
-        current
+        (current
           ? args[0]
             ? args[0] === 'delivery'
               ? '本任务交付报告：记录当前任务的成果、规格、验证和遗留事项，供下游接续。\n可复用经验：从报告中提炼适用条件、做法和注意事项，附带来源；可参考本聊天授权范围内其他会话已形成的经验。'
               : '以下操作仅管理当前会话。'
             : '常用操作；重置需再次确认。'
-          : '当前聊天尚无会话，查询菜单不会创建会话。',
+          : '当前聊天尚无会话，查询菜单不会创建会话。') +
+          (showGroupMode && !args[0]
+            ? `\n本群消息：${groupModeNames[this.groupMode(message)]}。群聊设置对主会话与子话题共同生效。${this.groupMode(message) !== 'mention' ? '接收普通消息需群消息权限已发布生效。' : ''}`
+            : ''),
         current?.id,
         args[0] ? `menu:${args[0]}` : 'menu',
         buttons,
