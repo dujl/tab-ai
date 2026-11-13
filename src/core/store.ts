@@ -639,6 +639,13 @@ export class Store {
         query.limit + 1,
       ) as unknown as StoredEvent[];
   }
+  interactionEvent(sessionId: string, id: string): StoredEvent | undefined {
+    return this.db
+      .prepare(
+        "SELECT id,session_id AS sessionId,type,text,at FROM events WHERE session_id=? AND type='interaction' AND json_valid(text) AND json_extract(text,'$.id')=? ORDER BY id DESC LIMIT 1",
+      )
+      .get(sessionId, id) as unknown as StoredEvent | undefined;
+  }
   interactionHistory(sessionId: string, id: string): StoredEvent[] {
     return this.db
       .prepare(

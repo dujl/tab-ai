@@ -95,6 +95,7 @@ import {
   attachmentReplyText,
 } from './session-attachments.js';
 import { ToolProgress, toolsText } from './tool-progress.js';
+import { inspectInteraction, interactionDetailsText } from './execution-records.js';
 import {
   executeManagementApi,
   recognizeManagement,
@@ -2150,7 +2151,7 @@ export class Manager {
       choices,
       adminAvailable,
     );
-    if (scope === 'session' && viewSession)
+    if (scope === 'session' && viewSession && action !== 'inspect')
       view.information = sessionInformation(this.usage.enrich(viewSession));
     if (action === 'compact' && deliveryStage !== 'confirmation' && deliveryStage !== 'management')
       view.tone =
@@ -4111,15 +4112,27 @@ export class Manager {
           .join('\n\n') || '当前没有待回答的问题。',
       );
     if (action === 'inspect') {
-      if (args.length !== 1) throw new Error('用法: /tab inspect <请求ID>');
-      const request = this.interactions().find(
-        (r) =>
-          r.id === args[0] &&
-          (r.sessionId === current.id || this.tasks.isAncestor(current.id, r.sessionId)),
-      );
-      if (!request) throw new Error('请求不存在、已结束或不属于当前会话。');
+      if (args.length !== 1) return reply('用法：/tab inspect <请求ID>', []);
+      const pending = this.interactions();
+      const sessionIds = [
+        current.id,
+        ...this.store
+          .taskRecords()
+          .flatMap((task) =>
+            task.sessionId &&
+            task.sessionId !== current.id &&
+            this.tasks.isAncestor(current.id, task.sessionId)
+              ? [task.sessionId]
+              : [],
+          ),
+      ];
+      for (const sessionId of sessionIds) {
+        const record = inspectInteraction(this.store, sessionId, args[0]!, pending);
+        if (record) return reply(interactionDetailsText(record), []);
+      }
       return reply(
-        `${request.title} · ${request.id}\n\n${request.detail}\n\n仅展示完整请求，尚未提交审批决定。`,
+        '未找到此请求的记录，或请求不属于本会话及其子任务。请在原审批所在会话查询，并核对完整请求 ID。',
+        [],
       );
     }
     if (action === 'stop') {

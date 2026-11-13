@@ -39,6 +39,7 @@ const titles: Record<string, string> = {
   history: '最近对话',
   tools: '工具记录',
   pending: '待处理请求',
+  inspect: '请求详情',
   close: '会话已关闭',
   open: '会话已打开',
   stop: '任务已停止',
@@ -212,21 +213,23 @@ export function managementView(
     home = action === 'menu' || action === 'admin';
   const buttons = (
     extra ??
-    (action === 'instructions'
-      ? [button('刷新信息', '/tab instructions')]
-      : scope === 'admin'
-        ? adminMenuButtons
-        : action === 'status' && session
-          ? [
-              sessionLifecycleButton(session),
-              { label: '刷新状态', command: '/tab status' },
-              ...(session.pendingInitialTask !== undefined &&
-              !session.nativeId &&
-              session.status === 'idle'
-                ? [button('开始首个任务', '/tab begin', true)]
-                : []),
-            ]
-          : commonSessionButtons(session))
+    (action === 'inspect'
+      ? []
+      : action === 'instructions'
+        ? [button('刷新信息', '/tab instructions')]
+        : scope === 'admin'
+          ? adminMenuButtons
+          : action === 'status' && session
+            ? [
+                sessionLifecycleButton(session),
+                { label: '刷新状态', command: '/tab status' },
+                ...(session.pendingInitialTask !== undefined &&
+                !session.nativeId &&
+                session.status === 'idle'
+                  ? [button('开始首个任务', '/tab begin', true)]
+                  : []),
+              ]
+            : commonSessionButtons(session))
   ).filter((b) => adminAvailable || !adminOnlyAction(b.command.split(/\s+/)[1] ?? ''));
   const navigation = {
     label: home
@@ -250,7 +253,9 @@ export function managementView(
   };
   return {
     action,
-    ...(scope === 'session' && session ? { information: sessionInformation(session) } : {}),
+    ...(scope === 'session' && session && action !== 'inspect'
+      ? { information: sessionInformation(session) }
+      : {}),
     title: `${scope === 'admin' ? '会话管理中心' : '本会话设置'}${home ? '' : ` · ${titles[action] ?? '管理结果'}`}`,
     text,
     buttons,

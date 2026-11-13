@@ -527,3 +527,140 @@ test('DingTalk view-original callbacks retain native approval and provide exact 
     assert.equal(p.status, undefined);
   });
 });
+
+test('inspect shows durable approval details after settlement without a generic menu or repeated decisions', async () => {
+  const f = fixture(),
+    views: import('../src/core/types.js').ManagementView[] = [];
+  Object.assign(f.channel, {
+    async sendManagement(_message: unknown, view: import('../src/core/types.js').ManagementView) {
+      views.push(view);
+    },
+  });
+  f.agent.handler = async (run) => {
+    await run.hooks.ask(
+      { kind: 'approval', title: 'Inspect regression', detail: script },
+      run.signal,
+    );
+  };
+  try {
+    await f.manager.receive(incoming('start'));
+    await until(() => f.manager.interactions().length === 1);
+    const pending = f.manager.interactions()[0]!;
+    await f.manager.receive(incoming(`/tab inspect ${pending.id}`));
+    assert.match(views.at(-1)!.text, /状态：等待处理/);
+    assert.equal(views.at(-1)!.action, 'inspect');
+    assert.equal(views.at(-1)!.information, undefined);
+    assert.deepEqual(views.at(-1)!.buttons, []);
+    assert.equal(f.manager.interactions().length, 1);
+    await f.manager.receive(incoming(`/tab approve ${pending.id} allow`));
+    await f.manager.idle();
+    for (let n = 0; n < 1100; n++) f.store.event(pending.sessionId, 'activity', 'filler');
+    const count = () => f.store.interactionHistory(pending.sessionId, pending.id).length;
+    const before = count();
+    await f.manager.receive(incoming(`/tab inspect ${pending.id}`));
+    const view = views.at(-1)!;
+    assert.match(view.title, /请求详情/);
+    assert.ok(view.text.includes(script));
+    assert.match(view.text, /状态：已允许/);
+    assert.match(view.text, /授权范围：仅本次/);
+    assert.match(view.text, /不代表工具已经执行成功/);
+    assert.equal(view.information, undefined);
+    assert.deepEqual(view.buttons, []);
+    assert.equal(count(), before);
+    assert.equal(f.agent.inputs.length, 1);
+    assert.equal(f.manager.interactions().length, 0);
+    const other = incoming(`/tab inspect ${pending.id}`, 'alice', 'other-topic');
+    f.store.create(other.route, 'codex', f.dir);
+    await f.manager.receive(other);
+    assert.match(views.at(-1)!.text, /未找到此请求/);
+    assert.ok(!views.at(-1)!.text.includes(script));
+    assert.deepEqual(views.at(-1)!.buttons, []);
+    await f.manager.receive(incoming('/tab inspect'));
+    assert.match(views.at(-1)!.text, /用法/);
+    assert.deepEqual(views.at(-1)!.buttons, []);
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test('inspect distinguishes archived timeout, denial and unknown outcome without reviving requests', async () => {
+  const f = fixture();
+  try {
+    const session = f.store.create(incoming('').route, 'codex', f.dir);
+    for (const [status, label] of [
+      ['timed_out', '已超时，未批准'],
+      ['denied', '已拒绝'],
+      ['cancelled', '已取消'],
+      ['ended_unknown', '已结束，结果未记录'],
+    ]) {
+      const r = { ...request('unique archived command'), sessionId: session.id };
+      f.store.event(session.id, 'interaction', JSON.stringify(r));
+      if (status !== 'ended_unknown')
+        f.store.event(session.id, 'interaction_closed', JSON.stringify({ id: r.id, status }));
+      await f.manager.receive(incoming(`/tab inspect ${r.id}`));
+      const text = f.channel.sent.at(-1)!.text;
+      assert.ok(text.includes(label!));
+      assert.ok(text.includes(r.detail));
+      assert.equal(f.manager.interactions().length, 0);
+    }
+    assert.equal(f.agent.inputs.length, 0);
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test('inspect permits a parent to read descendant history but does not disclose parent or sibling requests to children', async () => {
+  const f = fixture();
+  try {
+    const parent = f.store.create(incoming('', 'alice', 'parent').route, 'codex', f.dir);
+    const child = f.store.create(incoming('', 'alice', 'child').route, 'codex', f.dir);
+    const sibling = f.store.create(incoming('', 'alice', 'sibling').route, 'codex', f.dir);
+    for (const session of [parent, child, sibling]) {
+      session.taskId = randomUUID();
+      f.store.save(session);
+    }
+    for (const session of [parent, child, sibling]) {
+      f.store.saveTask({
+        id: session.taskId!,
+        rootId: parent.taskId!,
+        ...(session === parent ? {} : { parentId: parent.taskId! }),
+        sessionId: session.id,
+        route: session.route,
+        key: randomUUID(),
+        title: 'task',
+        objective: 'inspect scope',
+        criteria: 'test',
+        context: '',
+        agent: 'codex',
+        workspace: f.dir,
+        dependencies: [],
+        state: 'paused',
+        revision: 0,
+        autoTurns: 0,
+        executionMode: 'interactive',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+    }
+    const records = [parent, child, sibling].map((session) => {
+      const r = { ...request(`private ${session.id}`), sessionId: session.id };
+      f.store.event(session.id, 'interaction', JSON.stringify(r));
+      f.store.event(
+        session.id,
+        'interaction_closed',
+        JSON.stringify({ id: r.id, status: 'denied' }),
+      );
+      return r;
+    });
+    await f.manager.receive(incoming(`/tab inspect ${records[1]!.id}`, 'alice', 'parent'));
+    assert.ok(f.channel.sent.at(-1)!.text.includes(records[1]!.detail));
+    for (const record of [records[0]!, records[2]!]) {
+      await f.manager.receive(incoming(`/tab inspect ${record.id}`, 'alice', 'child'));
+      assert.match(f.channel.sent.at(-1)!.text, /未找到此请求/);
+      assert.ok(!f.channel.sent.at(-1)!.text.includes(record.detail));
+    }
+    assert.equal(f.agent.inputs.length, 0);
+  } finally {
+    await f.cleanup();
+  }
+});
