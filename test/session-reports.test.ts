@@ -457,3 +457,257 @@ test('cancelling a task subtree records idempotent cancelled handoffs without ma
     await f.cleanup();
   }
 });
+
+test('closing a child sends one report card to its original topic and direct parent without waking agents; report links read the exact version', async () => {
+  const f = fixture();
+  const sent: { message: any; view: any }[] = [];
+  Object.assign(f.channel, {
+    async sendManagement(message: any, view: any) {
+      sent.push({ message, view });
+    },
+  });
+  try {
+    const grand = f.store.create(incoming('', 'alice', 'grand').route, 'codex', f.dir),
+      parent = f.store.create(incoming('', 'alice', 'parent').route, 'codex', f.dir),
+      child = f.store.create(incoming('', 'alice', 'child').route, 'codex', f.dir);
+    parent.parentSessionId = grand.id;
+    child.parentSessionId = parent.id;
+    f.store.save(parent);
+    f.store.save(child);
+    f.store.event(child.id, 'response', '已交付接续资料，仍待验收');
+    f.manager.closeSession(child.id);
+    f.manager.closeSession(child.id);
+    await wait(
+      () =>
+        f.store.reports.list(child.id)[0]?.notifications?.every((n) => n.state === 'delivered') ===
+        true,
+    );
+    const report = f.store.reports.list(child.id)[0]!;
+    assert.equal(sent.length, 2);
+    assert.deepEqual(
+      sent.map((s) => s.message.route.thread),
+      ['child', 'parent'],
+    );
+    assert.deepEqual(
+      sent.map((s) => s.view.title),
+      ['结束报告已生成', '子任务交接摘要'],
+    );
+    for (const { view } of sent) {
+      assert.match(view.text, /尚未确认完成/);
+      assert.equal(view.tone, 'orange');
+      assert.equal(view.information, undefined);
+      assert.ok(view.buttons.some((b: any) => b.command === `/tab report ${report.id} document`));
+    }
+    assert.equal(sent[1]!.view.session.id, parent.id);
+    assert.equal(f.agent.inputs.length, 0);
+    assert.equal(f.store.get(parent.id)!.status, 'idle');
+    assert.equal(f.store.events(grand.id).filter((e) => e.type === 'handoff_received').length, 0);
+    for (let i = 0; i < 4; i++) f.manager.reports.request(child.id);
+    await wait(
+      () =>
+        f.store.reports.list(child.id).length === 5 &&
+        f.store.reports.list(child.id).every((r) => r.state === 'ready'),
+    );
+    await f.manager.receive(incoming(`/tab report ${report.id}`, 'alice', 'parent'));
+    assert.match(sent.at(-1)!.view.text, new RegExp(report.id));
+    assert.match(sent.at(-1)!.view.text, /已交付接续资料/);
+    assert.equal(sent.length, 3);
+    await f.manager.receive(incoming(`/tab report ${report.id}`, 'bob', 'parent'));
+    assert.ok(!f.channel.sent.at(-1)?.text.includes('已交付接续资料'));
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test('unconfirmed child notification preserves a ready report, does not retry and does not prevent parent delivery', async () => {
+  const f = fixture();
+  let sourceAttempts = 0;
+  let parentAttempts = 0;
+  Object.assign(f.channel, {
+    async sendManagement(m: any) {
+      if (m.route.thread === 'child') {
+        sourceAttempts++;
+        throw Error('secret transport headers');
+      }
+      parentAttempts++;
+    },
+  });
+  try {
+    const parent = f.store.create(incoming('', 'alice', 'parent').route, 'codex', f.dir),
+      child = f.store.create(incoming('', 'alice', 'child').route, 'codex', f.dir);
+    child.parentSessionId = parent.id;
+    f.store.save(child);
+    f.manager.closeSession(child.id);
+    await wait(
+      () =>
+        f.store.reports
+          .list(child.id)[0]
+          ?.notifications?.some((n) => n.role === 'parent' && n.state === 'delivered') === true,
+    );
+    const report = f.store.reports.list(child.id)[0]!;
+    assert.equal(report.state, 'ready');
+    assert.deepEqual(
+      report.notifications!.map((n) => n.state),
+      ['unconfirmed', 'delivered'],
+    );
+    assert.ok(!JSON.stringify(report).includes('secret transport'));
+    await new Promise((r) => setTimeout(r, 600));
+    assert.equal(sourceAttempts, 1);
+    assert.equal(parentAttempts, 1);
+    assert.equal(f.agent.inputs.length, 0);
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test('report notification skips a rebound parent route rather than disclosing the old child report to its replacement', async () => {
+  const f = fixture();
+  let finish!: () => void;
+  const sent: any[] = [];
+  Object.assign(f.channel, {
+    async sendManagement(m: any) {
+      sent.push(m);
+    },
+  });
+  (f.manager.reports as any).writer = {
+    async generate() {
+      await new Promise<void>((r) => {
+        finish = r;
+      });
+      return { ...draft('子任务报告'), lessons: [] };
+    },
+  };
+  try {
+    const parent = f.store.create(incoming('', 'alice', 'parent').route, 'codex', f.dir),
+      child = f.store.create(incoming('', 'alice', 'child').route, 'codex', f.dir);
+    child.parentSessionId = parent.id;
+    f.store.save(child);
+    f.manager.closeSession(child.id);
+    await wait(() => !!finish);
+    f.store.create(parent.route, 'codex', f.dir);
+    finish();
+    await wait(
+      () =>
+        f.store.reports
+          .list(child.id)[0]
+          ?.notifications?.some((n) => n.role === 'parent' && n.state === 'skipped') === true,
+    );
+    assert.deepEqual(
+      sent.map((m) => m.route.thread),
+      ['child'],
+    );
+    assert.equal(f.agent.inputs.length, 0);
+  } finally {
+    finish?.();
+    await f.cleanup();
+  }
+});
+
+test('restart resumes pending notices, leaves interrupted sends unconfirmed and does not backfill historical reports', async () => {
+  const { SessionReports } = await import('../src/core/session-reports.js');
+  const f = fixture();
+  await f.manager.reports.close();
+  let calls = 0;
+  let service: InstanceType<typeof SessionReports> | undefined;
+  try {
+    const parent = f.store.create(incoming('', 'alice', 'parent').route, 'codex', f.dir),
+      child = f.store.create(incoming('', 'alice', 'child').route, 'codex', f.dir);
+    child.parentSessionId = parent.id;
+    f.store.save(child);
+    const old = f.store.reports.request(child, undefined, 'close', 'old', 0);
+    old.state = 'ready';
+    old.body = { ...draft(), lessons: [] };
+    old.notified = true;
+    f.store.reports.save(old);
+    const report = f.store.reports.request(child, undefined, 'close', 'interrupted', 0);
+    report.state = 'ready';
+    report.body = { ...draft(), lessons: [] };
+    report.notified = true;
+    report.notifications = [
+      {
+        sessionId: child.id,
+        routeKey: child.routeKey,
+        role: 'source',
+        state: 'sending',
+        updatedAt: Date.now(),
+      },
+      {
+        sessionId: parent.id,
+        routeKey: parent.routeKey,
+        role: 'parent',
+        state: 'pending',
+        updatedAt: Date.now(),
+      },
+    ];
+    f.store.reports.save(report);
+    service = new SessionReports(f.store, {
+      active: () => false,
+      capacity: () => false,
+      refresh() {},
+      async notify() {
+        calls++;
+        return true;
+      },
+    });
+    service.start();
+    await wait(() => f.store.reports.get(report.id)?.notifications?.[1]?.state === 'delivered');
+    assert.equal(f.store.reports.get(report.id)!.notifications![0]!.state, 'unconfirmed');
+    assert.equal(f.store.reports.get(old.id)!.notifications, undefined);
+    assert.equal(calls, 1);
+    assert.equal(f.agent.inputs.length, 0);
+  } finally {
+    await service?.close();
+    await f.cleanup();
+  }
+});
+
+test('authenticated explicit delivery queues a historical close report once, without regeneration or cross-scope access', async () => {
+  const f = fixture();
+  const server = createDashboard(f.manager, 'token');
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+  const base = `http://127.0.0.1:${(server.address() as any).port}/api`;
+  try {
+    const parent = f.store.create(incoming('', 'alice', 'parent').route, 'codex', f.dir),
+      child = f.store.create(incoming('', 'alice', 'child').route, 'codex', f.dir),
+      foreign = f.store.create(incoming('', 'bob', 'foreign').route, 'codex', f.dir);
+    child.parentSessionId = parent.id;
+    f.store.save(child);
+    const report = f.store.reports.request(child, undefined, 'close', 'historical-close', 0);
+    report.state = 'ready';
+    report.body = { ...draft('历史结束报告'), lessons: [] };
+    report.notified = true;
+    f.store.reports.save(report);
+    const url = `${base}/sessions/${child.id}/reports/${report.id}/notifications`;
+    assert.equal((await fetch(url, { method: 'POST', body: '{}' })).status, 401);
+    const headers = { Authorization: 'Bearer token', 'Content-Type': 'application/json' };
+    assert.ok(
+      (
+        await fetch(`${base}/sessions/${foreign.id}/reports/${report.id}/notifications`, {
+          method: 'POST',
+          headers,
+          body: '{}',
+        })
+      ).status >= 400,
+    );
+    for (let i = 0; i < 2; i++)
+      assert.equal((await fetch(url, { method: 'POST', headers, body: '{}' })).status, 202);
+    await wait(
+      () =>
+        f.store.reports.get(report.id)?.notifications?.every((n) => n.state === 'delivered') ===
+        true,
+    );
+    assert.equal(f.channel.sent.length, 2);
+    assert.deepEqual(
+      f.channel.sent.map((s) => s.message.route.thread),
+      ['child', 'parent'],
+    );
+    assert.equal(f.store.reports.list(child.id).length, 1);
+    assert.equal(f.agent.inputs.length, 0);
+    await fetch(url, { method: 'POST', headers, body: '{}' });
+    await new Promise((r) => setTimeout(r, 300));
+    assert.equal(f.channel.sent.length, 2);
+  } finally {
+    await new Promise<void>((r) => server.close(() => r()));
+    await f.cleanup();
+  }
+});

@@ -46,7 +46,11 @@ export interface TaskRecord {
   // A durable task record can retain interactive execution until explicitly orchestrated.
   executionMode?: 'interactive';
   instructions?: string;
-  progress?: { summary: string; at: number };
+  progress?: {
+    summary: string;
+    at: number;
+    lessons?: z.infer<typeof reportDraftSchema>['lessons'];
+  };
   key: string;
   title: string;
   objective: string;

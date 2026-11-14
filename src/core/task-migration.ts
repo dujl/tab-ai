@@ -46,7 +46,12 @@ export function interactiveTask(
     updatedAt: session.updatedAt,
   };
   const progress = session.topicProgress ?? report;
-  if (progress) task.progress = { summary: progress.result.summary, at: progress.at };
+  if (progress)
+    task.progress = {
+      summary: progress.result.summary,
+      lessons: progress.result.lessons,
+      at: progress.at,
+    };
   if (completed)
     task.result = {
       summary: final!.summary,

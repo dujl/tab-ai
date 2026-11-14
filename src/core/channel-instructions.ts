@@ -84,7 +84,7 @@ export function agentInstructions(session: Session): string | undefined {
     [
       channelInstructions(session),
       session.taskId
-        ? '【任务编排】本 Session 是任务节点。task_list 查看本任务和直接子任务，task_create 拆分独立 Session，可分别选择 Agent。task_progress 只保存阶段进展；只有整体目标完成才 task_report 提交结构化成果，父任务通过 task_review 验收，未验收子任务前不能结项。等待子任务时结束本轮，不循环轮询。'
+        ? '【任务编排】本 Session 是任务节点。task_list 查看本任务和直接子任务，task_create 拆分独立 Session，可分别选择 Agent。有阶段成果或经验时主动调用 task_progress 保存 summary 和 lessons，父任务下一轮可读，不自动唤醒或结项；只有整体目标完成才 task_report 提交结构化成果，父任务通过 task_review 验收，未验收子任务前不能结项。等待子任务时结束本轮，不循环轮询。'
         : topicRoleInstructions(session),
       session.taskToolsEnabled || session.taskId
         ? '【任务能力】需要拆分或验收工作时可以使用 task_list / task_create / task_progress / task_report / task_review。首次使用任务工具时框架会原地登记任务树，保留本 Session 及原生上下文；不会重跑历史。普通回答不等于目标完成。'
@@ -101,7 +101,7 @@ export function codexInstructions(session: Session): string | undefined {
   const channel = [
       channelInstructions(session),
       session.taskId
-        ? '【任务编排】本 Session 是任务节点。使用 task_list / task_create / task_progress / task_report / task_review 维护目标、拆分和验收；阶段进度不结项，整个目标完成后才提交最终成果。等待子任务时结束本轮，不轮询。'
+        ? '【任务编排】本 Session 是任务节点。使用 task_list / task_create / task_progress / task_report / task_review 维护目标、拆分和验收；有阶段总结和经验时主动使用 task_progress（summary、lessons），供父任务下一轮读取，不自动唤醒或结项；整个目标完成后才提交最终成果。等待子任务时结束本轮，不轮询。'
         : topicRoleInstructions(session),
       session.taskToolsEnabled || session.taskId
         ? '【任务能力】可按需要使用任务工具拆分独立子 Session，分别选择 Agent；首次使用时原地登记，保留原生上下文，不重跑历史。普通回答不表示任务完成。'

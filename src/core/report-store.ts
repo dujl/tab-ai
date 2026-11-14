@@ -81,6 +81,19 @@ export class ReportStore {
     const row = this.db.prepare('SELECT data FROM session_reports WHERE id=?').get(id);
     return row ? JSON.parse(String(row.data)) : undefined;
   }
+  latestReady(sessionIds: string[]): SessionReport[] {
+    if (!sessionIds.length) return [];
+    return this.db
+      .prepare(
+        `SELECT data FROM session_reports r WHERE state='ready'
+        AND session_id IN (SELECT value FROM json_each(?))
+        AND version=(SELECT max(version) FROM session_reports x
+          WHERE x.session_id=r.session_id AND x.state='ready')
+        ORDER BY updated_at DESC,id`,
+      )
+      .all(JSON.stringify(sessionIds))
+      .map((r) => JSON.parse(String(r.data)));
+  }
   save(report: SessionReport): void {
     report.updatedAt = Date.now();
     this.db
@@ -103,6 +116,16 @@ export class ReportStore {
       .all()
       .map((r) => JSON.parse(String(r.data)));
   }
+  pendingNotifications(): SessionReport[] {
+    return this.db
+      .prepare(
+        `SELECT data FROM session_reports r WHERE state='ready' AND EXISTS
+        (SELECT 1 FROM json_each(r.data,'$.notifications') n WHERE json_extract(n.value,'$.state')='pending')
+        ORDER BY updated_at LIMIT 64`,
+      )
+      .all()
+      .map((r) => JSON.parse(String(r.data)));
+  }
   task(id: string, revision: number): SessionReport | undefined {
     const r = this.db
       .prepare(
@@ -113,10 +136,19 @@ export class ReportStore {
   }
   recover(): void {
     for (const row of this.db
-      .prepare("SELECT data FROM session_reports WHERE state='running'")
+      .prepare(
+        `SELECT data FROM session_reports r WHERE state='running' OR EXISTS
+        (SELECT 1 FROM json_each(r.data,'$.notifications') n WHERE json_extract(n.value,'$.state')='sending')`,
+      )
       .all()) {
       const r = JSON.parse(String(row.data)) as SessionReport;
-      r.state = 'pending';
+      if (r.state === 'running') r.state = 'pending';
+      for (const notice of r.notifications ?? []) {
+        if (notice.state !== 'sending') continue;
+        notice.state = 'unconfirmed';
+        notice.updatedAt = Date.now();
+        notice.detail = '通知发送期间服务中断，结果未确认；未自动重发。';
+      }
       this.save(r);
     }
   }

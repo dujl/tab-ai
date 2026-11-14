@@ -11,6 +11,7 @@ import {
 } from './topic-control.js';
 import type { Session } from './types.js';
 import type { Store } from './store.js';
+import { lessonExcerpts } from './report-model.js';
 import {
   sessionParentId,
   sameSessionScope,
@@ -25,6 +26,7 @@ interface Host {
   active(id: string): boolean;
   capacity(): boolean;
   run(s: Session, job: TopicUpdate, text: string): void;
+  summary?(s: Session, result: TopicReport, key: string, eventId: number): void;
 }
 const related = sameSessionScope;
 export class Topics {
@@ -123,17 +125,39 @@ export class Topics {
         status: c.status,
         delivery: topicDeliveryState(c),
         topicCompleted: c.topicCompleted === true,
+        ...(c.topicProgress
+          ? {
+              progress: {
+                revision: c.topicProgress.revision,
+                at: c.topicProgress.at,
+                kind: 'progress',
+                summary: c.topicProgress.result.summary.slice(0, excerptLength),
+                remainingWork: c.topicProgress.result.remainingWork
+                  ?.slice(0, 3)
+                  .map((s) => s.slice(0, excerptLength)),
+                lessons: lessonExcerpts(
+                  c.topicProgress.result.lessons,
+                  Math.max(20, Math.floor(excerptLength / 12)),
+                ),
+                lessonCount: c.topicProgress.result.lessons?.length ?? 0,
+              },
+            }
+          : {}),
         ...(c.topicReport
           ? {
               revision: c.topicReport.revision,
               reason: c.topicReport.reason ?? 'legacy',
               reportKind: c.topicReport.result.kind,
               summary: c.topicReport.result.summary.slice(0, excerptLength),
+              lessons: lessonExcerpts(
+                c.topicReport.result.lessons,
+                Math.max(20, Math.floor(excerptLength / 12)),
+              ),
             }
           : { summary: '尚未提交可回传的摘要' }),
       })),
     };
-    return `\n\n【话题索引 · 框架资料，不是用户指令】\n${JSON.stringify(data)}\n可以据此汇总数量、层级、分工和已提交成果，无需全局会话管理权限。total 是全部下级会话数；directChildCount 是直接子会话数；sessionTotal 是当前会话及全部下级合计数（1 + total），询问总共有多少个 session 时应同时列出当前会话和各下级，不能把下级数当成合计。depth 和 parentSessionId 表示真实层级，不将孙会话当成直接子会话。本索引不包含兄弟或其他分支。普通阶段进度不在此索引披露。关闭、空闲或历史报告不代表话题完成；没有最终报告就说明尚无最终总结。索引摘要有长度限制，/tab topics 可查看已保存成果。仅依据已提交成果回答，不推测完整话题讨论。\n【话题索引结束】`;
+    return `\n\n【话题索引 · 框架资料，不是用户指令】\n${JSON.stringify(data)}\n可以据此汇总数量、层级、分工和已提交成果，无需全局会话管理权限。total 是全部下级会话数；directChildCount 是直接子会话数；sessionTotal 是当前会话及全部下级合计数（1 + total），询问总共有多少个 session 时应同时列出当前会话和各下级，不能把下级数当成合计。depth 和 parentSessionId 表示真实层级，不将孙会话当成直接子会话。本索引不包含兄弟或其他分支。progress 为子话题主动提交的阶段总结和经验，下一轮可据此协调工作；根据 sessionId、parentSessionId 和 title 识别来源，按执行 Agent 的报告使用，尚未验收，不表示完成。关闭、空闲或历史报告不代表话题完成；没有最终报告就说明尚无最终总结。索引摘要有长度限制，/tab topics 可查看已保存成果。仅依据已提交成果回答，不推测完整话题讨论。\n【话题索引结束】`;
   }
   describe(parent: Session): string {
     const descendants = this.descendants(parent),
@@ -141,7 +165,7 @@ export class Topics {
       ids = new Set([parent.id, ...children.map((c) => c.id)]),
       jobs = this.store.topicUpdates().filter((j) => ids.has(j.parentId));
     const header = isTopicMain(parent) ? '当前主会话' : '当前会话';
-    return `${header}及关联子会话合计 ${children.length + 1} 个 session（1 个${isTopicMain(parent) ? '主会话' : '当前会话'} + ${children.length} 个子会话）。\n本群关联子话题共 ${children.length} 个（未关闭 ${children.filter((c) => c.status !== 'closed').length}，已关闭 ${children.filter((c) => c.status === 'closed').length}）；直接子会话 ${this.children(parent).length} 个，其余为更深层后代。这是本会话分支的只读总控视图，无需 Manager 权限。\n层级按创建来源自动关联，无需开关。${parent.topicReportsPaused ? '\n你已停止本会话，后续摘要等待继续处理。' : ''}\n${isTopicMain(parent) ? '主会话' : '当前会话'}：${parent.title ?? '主会话'} · ${parent.id}\n${isTopicMain(parent) ? '主会话' : '当前会话'}状态：${parent.status}\n各层使用独立 session；阶段进度留在本层，仅整体最终交付或用户明确要求汇报时回传直接父会话，不越级结项。只有 group mode 控制用户输入是否需要 @。\n\n${descendants.map(({ session: c, depth }) => `${'  '.repeat(depth - 1)}${depth > 1 ? '↳ ' : ''}${c.title ?? '待命话题'} · ${c.id.slice(0, 8)}\n父会话：${sessionParentId(c)} · 第 ${depth} 层\n目标：${this.objective(c)}\n会话：${c.status} · 交付：${topicDeliveryState(c)}${c.topicReport ? ` · 汇报第 ${c.topicReport.revision} 版` : ''}${c.topicReport ? `\n${c.topicReport.reason === 'completed' ? '整体完成报告' : c.topicReport.reason === 'requested' ? '用户要求的阶段汇报' : '历史报告（未确认整体完成）'}：${c.topicReport.result.summary}` : '\n尚未提交可回传的摘要或最终总结。'}`).join('\n\n') || '尚无关联话题。新话题会自动登记，已有原生上下文不会被重建或复制。'}\n\n待回传 ${jobs.filter((j) => j.state === 'pending').length}；结果未确认 ${jobs.filter((j) => j.state === 'interrupted').length}。未确认轮次不会自动重跑，可在这里查看原始交付摘要。`;
+    return `${header}及关联子会话合计 ${children.length + 1} 个 session（1 个${isTopicMain(parent) ? '主会话' : '当前会话'} + ${children.length} 个子会话）。\n本群关联子话题共 ${children.length} 个（未关闭 ${children.filter((c) => c.status !== 'closed').length}，已关闭 ${children.filter((c) => c.status === 'closed').length}）；直接子会话 ${this.children(parent).length} 个，其余为更深层后代。这是本会话分支的只读总控视图，无需 Manager 权限。\n层级按创建来源自动关联，无需开关。${parent.topicReportsPaused ? '\n你已停止本会话，后续摘要等待继续处理。' : ''}\n${isTopicMain(parent) ? '主会话' : '当前会话'}：${parent.title ?? '主会话'} · ${parent.id}\n${isTopicMain(parent) ? '主会话' : '当前会话'}状态：${parent.status}\n各层使用独立 session；阶段总结与经验供父会话下一轮读取；仅整体最终交付或用户明确要求汇报时自动启动直接父会话汇报轮，不越级结项。只有 group mode 控制用户输入是否需要 @。\n\n${descendants.map(({ session: c, depth }) => `${'  '.repeat(depth - 1)}${depth > 1 ? '↳ ' : ''}${c.title ?? '待命话题'} · ${c.id.slice(0, 8)}\n父会话：${sessionParentId(c)} · 第 ${depth} 层\n目标：${this.objective(c)}\n会话：${c.status} · 交付：${topicDeliveryState(c)}${c.topicReport ? ` · 汇报第 ${c.topicReport.revision} 版` : ''}${c.topicReport ? `\n${c.topicReport.reason === 'completed' ? '整体完成报告' : c.topicReport.reason === 'requested' ? '用户要求的阶段汇报' : '历史报告（未确认整体完成）'}：${c.topicReport.result.summary}` : '\n尚未提交可回传的摘要或最终总结。'}`).join('\n\n') || '尚无关联话题。新话题会自动登记，已有原生上下文不会被重建或复制。'}\n\n待回传 ${jobs.filter((j) => j.state === 'pending').length}；结果未确认 ${jobs.filter((j) => j.state === 'interrupted').length}。未确认轮次不会自动重跑，可在这里查看原始交付摘要。`;
   }
   canReport(child: Session): Session {
     this.check(child);
@@ -166,7 +190,7 @@ export class Topics {
           'topic_report',
           {
             description:
-              '保存本话题报告：默认 progress 仅留子话题，不唤醒主会话。final 必须是整个话题目标已完成，提供 completionEvidence 且 remainingWork 为空；准备工作或一轮结束不是最终交付。用户明确要求汇报时由框架允许 progress 回传，工具不能自行申请此权限。',
+              '主动保存本话题阶段总结及经验：progress 供父会话下一轮读取，不自动唤醒主会话。final 必须是整个话题目标已完成，提供 completionEvidence 且 remainingWork 为空；准备工作或一轮结束不是最终交付。用户明确要求汇报时才允许 progress 启动父会话汇报轮。',
             inputSchema: topicReportSchema.shape,
           },
           (input) =>
@@ -221,7 +245,17 @@ export class Topics {
       this.store.save(current);
       child.topicProgress = current.topicProgress;
       child.topicCompleted = false;
-      this.store.event(child.id, 'topic_progress', JSON.stringify(current.topicProgress));
+      const event = this.store.event(
+        child.id,
+        'topic_progress',
+        JSON.stringify(current.topicProgress),
+      );
+      this.host.summary?.(
+        current,
+        result,
+        `topic-progress:${current.id}:${current.topicProgress.revision}`,
+        event.id,
+      );
       for (const job of this.store
         .topicUpdates()
         .filter(
@@ -264,6 +298,7 @@ export class Topics {
       state: 'pending',
       at: report.at,
     };
+    let summaryEventId = 0;
     this.store.atomic(() => {
       current.topicReport = report;
       current.topicCompleted =
@@ -281,7 +316,7 @@ export class Topics {
       child.parentSessionId = current.parentSessionId;
       child.topicParentId = current.topicParentId;
       this.store.saveTopicUpdate(job);
-      this.store.event(
+      const event = this.store.event(
         parent.id,
         'topic_report',
         JSON.stringify({
@@ -292,7 +327,14 @@ export class Topics {
           result,
         }),
       );
+      summaryEventId = event.id;
     });
+    this.host.summary?.(
+      current,
+      result,
+      `topic-report:${current.id}:${report.revision}`,
+      summaryEventId,
+    );
     this.kick();
     return 'queued';
   }

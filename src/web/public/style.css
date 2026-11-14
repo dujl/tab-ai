@@ -438,6 +438,18 @@ dialog {
   width: calc(100% - 32px);
   padding: 32px;
 }
+.handoff-document {
+  max-width: min(900px, 92vw);
+  width: 92vw;
+  max-height: 90vh;
+  overflow: auto;
+}
+.handoff-document pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 50vh;
+  overflow: auto;
+}
 dialog::backdrop {
   background: #000b;
   backdrop-filter: blur(4px);

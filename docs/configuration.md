@@ -60,19 +60,20 @@ tab-ai -c /path/to/config.json serve
 }
 ```
 
-| 字段                   | 含义与影响                                                     |
-| ---------------------- | -------------------------------------------------------------- |
-| `dataDir`              | SQLite、访问令牌、渠道凭证、附件和向导草稿所在地               |
-| `port`                 | 本机 HTTP 端口；默认监听 `127.0.0.1`，局域网需显式配置         |
-| `defaultAgent`         | 新会话未指定时使用 codex、claude 或 opencode；不替换旧会话后端 |
-| `topicRouterAgent`     | 独立意图识别后端，仅 codex/claude；不复用工作 session          |
-| `defaultWorkspace`     | `workspaces` 中的默认别名                                      |
-| `workspaces`           | 目录别名映射；会话也可显式使用本机存在的绝对目录               |
-| `defaultInstructions`  | 可选的默认附加指令；普通会话未配置时沿用原生指令               |
-| `maxConcurrentRuns`    | 1～32；普通会话和任务调度共用并发容量，默认 4                  |
-| `turnTimeoutMs`        | 单轮最长时间，默认 30 分钟                                     |
-| `interactionTimeoutMs` | 原生问题/审批等待时间，默认 10 分钟；超时不自动批准            |
-| `agents.*.command`     | 原生可执行文件路径；Claude 未指定时可使用 SDK 自带运行时       |
+| 字段                   | 含义与影响                                                                                            |
+| ---------------------- | ----------------------------------------------------------------------------------------------------- |
+| `dataDir`              | SQLite、访问令牌、渠道凭证、附件和向导草稿所在地                                                      |
+| `port`                 | 本机 HTTP 端口；默认监听 `127.0.0.1`，局域网需显式配置                                                |
+| `defaultAgent`         | 新会话未指定时使用 codex、claude 或 opencode；不替换旧会话后端                                        |
+| `topicRouterAgent`     | 独立意图识别后端，仅 codex/claude；不复用工作 session                                                 |
+| `defaultWorkspace`     | `workspaces` 中的默认别名                                                                             |
+| `workspaces`           | 目录别名映射；会话也可显式使用本机存在的绝对目录                                                      |
+| `defaultInstructions`  | 可选的默认附加指令；普通会话未配置时沿用原生指令                                                      |
+| `handoffInlineLimit`   | 子任务摘要直接显示的字数上限，默认 50；1～1000，按 Unicode 字符计数；超过时显示精简摘要与交接文档入口 |
+| `maxConcurrentRuns`    | 1～32；普通会话和任务调度共用并发容量，默认 4                                                         |
+| `turnTimeoutMs`        | 单轮最长时间，默认 30 分钟                                                                            |
+| `interactionTimeoutMs` | 原生问题/审批等待时间，默认 10 分钟；超时不自动批准                                                   |
+| `agents.*.command`     | 原生可执行文件路径；Claude 未指定时可使用 SDK 自带运行时                                              |
 
 渠道字段参见[配置示例](../tab-ai.config.example.json)。向导生成的配置通常无需手写。企微 channel 可选 `contextGroups` 指定允许用官方 CLI 补读近期群消息的白名单；省略时关闭，需要同一机器人独立授权，详见[企微群聊补读](wechat-wecom.md#企微群聊近期消息补读可选)。
 

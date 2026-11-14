@@ -627,13 +627,13 @@ export class Store {
     const total = Number(
       this.db
         .prepare(
-          "SELECT count(*) AS n FROM events WHERE session_id=? AND id<=? AND type IN ('user','response','tool','system','context_reset')",
+          "SELECT count(*) AS n FROM events WHERE session_id=? AND id<=? AND type IN ('user','response','tool','system','context_reset','topic_progress','task_progress')",
         )
         .get(id, end)?.n ?? 0,
     );
     const rows = this.db
       .prepare(
-        "SELECT id,type,text,at FROM (SELECT id,type,text,at FROM events WHERE session_id=? AND id<=? AND type IN ('user','response','tool','system','context_reset') ORDER BY id DESC LIMIT 200) ORDER BY id",
+        "SELECT id,type,text,at FROM (SELECT id,type,text,at FROM events WHERE session_id=? AND id<=? AND type IN ('user','response','tool','system','context_reset','topic_progress','task_progress') ORDER BY id DESC LIMIT 200) ORDER BY id",
       )
       .all(id, end) as unknown as { id: number; type: string; text: string; at: number }[];
     for (const r of rows)
@@ -709,6 +709,13 @@ export class Store {
         'SELECT * FROM (SELECT id, session_id as sessionId, type, text, at FROM events WHERE session_id=? ORDER BY id DESC LIMIT ?) ORDER BY id',
       )
       .all(sessionId, limit) as unknown as StoredEvent[];
+  }
+  handoffEvents(sessionId: string): StoredEvent[] {
+    return this.db
+      .prepare(
+        "SELECT id,session_id AS sessionId,type,text,at FROM events WHERE session_id=? AND type='handoff_received' ORDER BY id DESC LIMIT 100",
+      )
+      .all(sessionId) as unknown as StoredEvent[];
   }
   latestEvent(sessionId: string, type: string): StoredEvent | undefined {
     return this.db
