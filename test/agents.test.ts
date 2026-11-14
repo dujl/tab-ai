@@ -30,7 +30,14 @@ test('Codex local sessions use on-request without prompt overrides and handle co
       activity: () => {},
       ask: async (request: any) => {
         assert.equal(request.approvalSections[0].value, 'echo hello');
-        assert.match(request.detail, /工作目录/);
+        assert.equal(
+          request.approvalSections.find((s: { label: string }) => s.label === '本次执行目录').value,
+          '原生未单独提供',
+        );
+        assert.equal(
+          request.approvalSections.find((s: { label: string }) => s.label === '会话默认目录').value,
+          session.workspace,
+        );
         assert.ok(!request.detail.includes('threadId'));
         return { allow: true };
       },

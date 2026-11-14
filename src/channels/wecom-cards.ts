@@ -21,8 +21,25 @@ export function wecomCard(prompt: CardPrompt): TemplateCard {
     sub_title_text: cardHint,
   };
   if (!prompt.question) {
-    const directory = prompt.request.approvalSections?.find((s) => s.label === '工作目录')?.value;
-    const name = directory?.split(/[\\/]/).filter(Boolean).at(-1) ?? directory;
+    const directoryLabels = ['本次执行目录', '会话默认目录', '工作目录'];
+    const directories = (prompt.request.approvalSections ?? [])
+      .filter((s) => directoryLabels.includes(s.label))
+      .slice(0, 2)
+      .map((s) => ({
+        keyname:
+          s.label === '本次执行目录'
+            ? '执行目录'
+            : s.label === '会话默认目录'
+              ? '会话目录'
+              : '目录',
+        value:
+          Array.from(s.value).slice(0, 110).join('') +
+          (Array.from(s.value).length > 110 ? '…（详情）' : ''),
+      }));
+    const factLimit = Math.min(
+      2,
+      6 - directories.length - (prompt.request.approvalContext ? 1 : 0) - 2,
+    );
     return {
       task_id: prompt.id,
       source: { desc: 'tab-ai 系统' },
@@ -33,19 +50,10 @@ export function wecomCard(prompt: CardPrompt): TemplateCard {
       },
       sub_title_text: approvalPreview(prompt, 96),
       horizontal_content_list: [
-        ...(name
-          ? [
-              {
-                keyname: '目录',
-                value:
-                  Array.from(name).slice(0, 23).join('') +
-                  (Array.from(name).length > 23 ? '…' : ''),
-              },
-            ]
-          : []),
+        ...directories,
         ...(prompt.request.approvalSummary?.facts
-          .filter((f) => f.label !== '工作目录')
-          .slice(0, 2)
+          .filter((f) => !directoryLabels.includes(f.label))
+          .slice(0, factLimit)
           .map((f) => ({
             keyname: f.label,
             value:

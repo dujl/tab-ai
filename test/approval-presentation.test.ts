@@ -2,6 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
+import { symlinkSync } from 'node:fs';
+import { join } from 'node:path';
 import { approvalPresentation } from '../src/agents/approval.js';
 import { CardRegistry, approvalDetailParts } from '../src/channels/cards.js';
 import { larkCard, larkCardAction } from '../src/channels/lark-cards.js';
@@ -70,7 +72,7 @@ test('native command stays exact; summary exposes cwd, literal targets and expli
   assert.match(JSON.stringify(result.approvalSummary), /newFutureScope/);
   assert.equal(result.approvalSummary!.operation, '执行复合命令或脚本');
   assert.equal(
-    approvalPresentation({ command: 'ls' }, '/fallback', true).approvalSections![1]!.value,
+    approvalPresentation({ command: 'ls' }, '/fallback', true).approvalSections![2]!.value,
     '/fallback',
   );
   assert.match(
@@ -192,7 +194,8 @@ test('WeCom card presents operation, directory, target hosts and view-original a
     ['allow', 'deny', 'details'],
   );
   assert.equal(card.source?.desc, 'tab-ai 系统');
-  assert.equal(card.horizontal_content_list![0]!.value, 'work');
+  assert.equal(card.horizontal_content_list![0]!.value, '/work');
+  assert.equal(card.horizontal_content_list![1]!.value, '/fallback');
   assert.match(JSON.stringify(card.horizontal_content_list), /api.example.com/);
   assert.ok(!JSON.stringify(card).includes('urllib.request'));
   p.status = '已拒绝本次操作';
@@ -660,6 +663,70 @@ test('inspect permits a parent to read descendant history but does not disclose 
       assert.ok(!f.channel.sent.at(-1)!.text.includes(record.detail));
     }
     assert.equal(f.agent.inputs.length, 0);
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test('approval distinguishes native execution cwd from session default across channel renderers without rewriting the request', () => {
+  const params = { command: 'git status --short', cwd: '/work/worktree', reason: 'Check worktree' };
+  const before = structuredClone(params);
+  const r = {
+    ...request(),
+    ...approvalPresentation(params, '/work/main', true),
+    approvalContext: { label: '按需审批', description: 'test' },
+  };
+  assert.deepEqual(params, before);
+  assert.equal(r.approvalSections!.find((s) => s.label === '本次执行目录')!.value, params.cwd);
+  assert.equal(r.approvalSections!.find((s) => s.label === '会话默认目录')!.value, '/work/main');
+  assert.equal(r.approvalSections!.find((s) => s.label === '执行命令')!.value, params.command);
+  assert.match(r.approvalSummary!.caution!, /不会修改会话设置/);
+  for (const text of [
+    JSON.stringify(larkCard(prompt(r))),
+    dingCardData(prompt(r)).body,
+    interactionText(r),
+  ]) {
+    assert.ok(text.includes('/work/main'));
+    assert.ok(text.includes('/work/worktree'));
+    assert.ok(text.includes('本次执行目录'));
+    assert.ok(text.includes('会话默认目录'));
+  }
+  const card = wecomCard(prompt(r));
+  assert.deepEqual(card.horizontal_content_list!.slice(0, 2), [
+    { keyname: '执行目录', value: '/work/worktree' },
+    { keyname: '会话目录', value: '/work/main' },
+  ]);
+  assert.ok(card.horizontal_content_list!.length <= 6);
+  assert.deepEqual(
+    card.button_list!.map((b) => b.key),
+    ['allow', 'deny', 'details'],
+  );
+});
+
+test('missing native cwd stays unknown and does not present the session default as verified execution cwd', () => {
+  for (const params of [{ command: 'pwd' }, { command: 'pwd', cwd: '' }]) {
+    const p = approvalPresentation(params, '/work/default', true);
+    assert.equal(
+      p.approvalSections!.find((s) => s.label === '本次执行目录')!.value,
+      '原生未单独提供',
+    );
+    assert.equal(
+      p.approvalSections!.find((s) => s.label === '会话默认目录')!.value,
+      '/work/default',
+    );
+    assert.match(p.approvalSummary!.caution!, /不能据此确认/);
+  }
+});
+
+test('canonical aliases display their original paths without claiming that execution changed directories', async () => {
+  const f = fixture();
+  try {
+    const alias = join(f.dir, 'workspace-alias');
+    symlinkSync(f.dir, alias, 'dir');
+    const p = approvalPresentation({ command: 'pwd', cwd: alias }, f.dir, true);
+    assert.equal(p.approvalSections!.find((s) => s.label === '本次执行目录')!.value, alias);
+    assert.equal(p.approvalSections!.find((s) => s.label === '会话默认目录')!.value, f.dir);
+    assert.equal(p.approvalSummary!.caution, undefined);
   } finally {
     await f.cleanup();
   }
