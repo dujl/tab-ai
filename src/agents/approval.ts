@@ -1,9 +1,10 @@
 import type { Interaction } from '../core/types.js';
+import { sameWorkspace } from '../core/session-workspace.js';
 
 const labels: Record<string, string> = {
   sessionPermissionRules: '本会话授权规则',
   command: '执行命令',
-  cwd: '工作目录',
+  cwd: '本次执行目录',
   reason: '申请原因',
   description: '操作说明',
   additionalPermissions: '额外权限',
@@ -189,10 +190,13 @@ export function approvalPresentation(
       label: labels.command!,
       value: 'Agent 未提供具体命令；请拒绝并在原生终端确认。',
     });
-  sections.push({
-    label: labels.cwd!,
-    value: typeof data.cwd === 'string' && data.cwd ? data.cwd : workspace,
-  });
+  const executionCwd = typeof data.cwd === 'string' && data.cwd ? data.cwd : undefined;
+  const differentDirectory =
+    !!executionCwd && executionCwd !== workspace && !sameWorkspace(executionCwd, workspace);
+  sections.push(
+    { label: labels.cwd!, value: executionCwd ?? '原生未单独提供' },
+    { label: '会话默认目录', value: workspace },
+  );
   for (const key of ['reason', 'description'])
     if (data[key] != null && data[key] !== '')
       sections.push({ label: labels[key]!, value: readable(data[key]) });
@@ -207,7 +211,8 @@ export function approvalPresentation(
     sections.push({ label: labels[key] ?? key, value: readable(value) });
   }
   const facts = [
-    { label: '工作目录', value: compact(sections.find((s) => s.label === '工作目录')!.value, 240) },
+    { label: labels.cwd!, value: compact(executionCwd ?? '原生未单独提供', 240) },
+    { label: '会话默认目录', value: compact(workspace, 240) },
   ];
   let operation = tool ? `调用 ${compact(tool, 60)}` : '执行原生工具操作',
     caution: string | undefined;
@@ -239,10 +244,18 @@ export function approvalPresentation(
     operation = tool === 'Read' ? '读取文件' : '操作文件';
     facts.push({ label: '文件路径', value: compact(data.file_path) });
   } else if (data.changes) operation = '修改文件';
+  const directoryNote = differentDirectory
+    ? '本次工具指定了与会话默认目录不同的执行目录；批准将沿用原生请求的目录，不会修改会话设置。'
+    : !executionCwd
+      ? '原生未提供本次工具执行目录；会话默认目录仅供参考，不能据此确认工具的实际执行目录。'
+      : undefined;
+  caution = [directoryNote, caution].filter(Boolean).join('\n') || undefined;
   // Native declarations remain explicitly attributed; these are not a model's safety assessment.
   for (const section of sections) {
     if (
-      ['工作目录', '执行命令', '原内容', '新内容', '内容'].includes(section.label) ||
+      [labels.cwd!, '会话默认目录', '执行命令', '原内容', '新内容', '内容'].includes(
+        section.label,
+      ) ||
       (section.label === '文件路径' && typeof data.file_path === 'string')
     )
       continue;
@@ -255,7 +268,9 @@ export function approvalPresentation(
     });
   }
   const priorities = ['额外权限', '网络访问', '授权目录', '权限类型', '授权匹配范围'];
-  const primary = facts.filter((f) => f.label === '工作目录' || priorities.includes(f.label));
+  const primary = facts.filter(
+    (f) => [labels.cwd!, '会话默认目录'].includes(f.label) || priorities.includes(f.label),
+  );
   const secondary = facts.filter((f) => !primary.includes(f));
   const visibleFacts = [...primary, ...secondary].slice(0, 10);
   if (facts.length > visibleFacts.length)
