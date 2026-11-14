@@ -157,6 +157,23 @@ export function createDashboard(manager: Manager, token: string, setup?: SetupSe
             .flatMap((e) => ('handoff' in e ? [{ ...e.handoff, at: e.at }] : [])),
         });
       }
+      const transcriptMatch = /^\/api\/sessions\/([0-9a-f-]{36})\/transcript$/.exec(path);
+      if (transcriptMatch && request.method === 'GET') {
+        const id = transcriptMatch[1]!,
+          query = new URL(request.url!, `http://${hosts[0]}`).searchParams;
+        if (!manager.store.get(id)) return json(response, 404, { error: '会话不存在' });
+        const before = query.has('before')
+          ? z.coerce.number().int().positive().parse(query.get('before'))
+          : undefined;
+        const rows = manager.store.transcriptEvents(id, before),
+          events = rows.slice(0, 120);
+        return json(response, 200, {
+          events: events.reverse(),
+          nextBefore: rows.length > 120 ? events[0]?.id : undefined,
+          coverage:
+            '框架实际提交的输入、公开回复和工具事件；原生未暴露的内部上下文不在此列，旧轮次可能缺少输入快照。',
+        });
+      }
       const reportMatch = /^\/api\/sessions\/([0-9a-f-]{36})\/reports$/.exec(path);
       if (reportMatch) {
         const id = reportMatch[1]!;

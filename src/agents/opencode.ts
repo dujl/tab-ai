@@ -425,6 +425,12 @@ export class OpenCodeAdapter implements AgentAdapter {
       const slash = settings?.model.indexOf('/') ?? -1;
       if (settings && (slash < 1 || slash === settings.model.length - 1))
         throw new Error('OpenCode 模型应使用 provider/model 格式。');
+      hooks.input?.({
+        text,
+        nativeId,
+        instructions: agentInstructions(session),
+        instructionMode: 'opencode-system',
+      });
       const result = responseSchema.parse(
         await server.request(`/session/${encodeURIComponent(nativeId)}/message`, combined, {
           parts: [{ type: 'text', text }],

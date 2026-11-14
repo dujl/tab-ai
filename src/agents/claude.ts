@@ -240,6 +240,12 @@ export class ClaudeAdapter implements AgentAdapter {
       capturedNativeId = false;
     const toolNames = new Map<string, string>();
     const plans = new ClaudePlans(priorPlan);
+    hooks.input?.({
+      text,
+      nativeId: session.nativeId,
+      instructions: agentInstructions(session),
+      instructionMode: 'claude-append',
+    });
     const conversation = this.queryRuntime({
       prompt: text,
       options: {
