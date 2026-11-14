@@ -96,8 +96,7 @@ export function agentInstructions(session: Session): string | undefined {
   );
 }
 
-// Existing snapshots already contain native developer instructions + the user's
-// additions. Retain that snapshot verbatim and add current channel metadata once.
+// Preserve the native instruction snapshot and append channel metadata once.
 export function codexInstructions(session: Session): string | undefined {
   const channel = [
       channelInstructions(session),
@@ -113,8 +112,7 @@ export function codexInstructions(session: Session): string | undefined {
     snapshot = session.codexDeveloperInstructions;
   if (!channel) return snapshot;
   const custom = session.instructions;
-  // We know the exact suffix used by older versions. Split only that suffix,
-  // preserving every byte of the native text and leaving the stored snapshot alone.
+  // Split only the exact user-instruction suffix; preserve the native text and stored snapshot.
   if (custom && snapshot === custom) return [channel, custom].join('\n\n');
   if (custom && snapshot?.endsWith(`\n\n${custom}`))
     return [snapshot.slice(0, -custom.length - 2), channel, custom].join('\n\n');

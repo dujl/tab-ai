@@ -158,10 +158,10 @@ test('Codex adds platform context on start/resume/compact and terminal handoff w
         .resumeCommand(s)
         .includes(`developer_instructions=${JSON.stringify(codexInstructions(s))}`),
     );
-    // A legacy native+custom snapshot is reused, never replaced by config/read.
-    s.codexDeveloperInstructions = 'Legacy native\n\nCustom role';
+    // A saved native/custom snapshot is preserved across configuration reads.
+    s.codexDeveloperInstructions = 'Saved native\n\nCustom role';
     await adapter.run(input);
-    assert.equal(s.codexDeveloperInstructions, 'Legacy native\n\nCustom role');
+    assert.equal(s.codexDeveloperInstructions, 'Saved native\n\nCustom role');
     const again = readFileSync(join(f.dir, 'rpc-trace.jsonl'), 'utf8')
       .trim()
       .split('\n')
@@ -169,7 +169,7 @@ test('Codex adds platform context on start/resume/compact and terminal handoff w
     assert.equal(again.filter((m) => m.method === 'config/read').length, 1);
     assert.match(
       again.filter((m) => m.method === 'thread/resume').at(-1).params.developerInstructions,
-      /Legacy native/,
+      /Saved native/,
     );
   } finally {
     await f.cleanup();

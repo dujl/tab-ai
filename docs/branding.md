@@ -11,5 +11,3 @@ Every task evolves. Any agent runs it (Codex, OpenCode, Claude Code…); any bot
 - 任务 MCP 服务名 `tab_ai_tasks`，对 Agent 暴露 `task_create` / `task_report` / `task_review` 等工具。
 - 新建机器人默认名称 `tab-ai-botN`。
 - `/tab` 是与品牌对应的聊天管理命令前缀，例如 `/tab menu`、`/tab status`、`/tab new`。菜单、卡片、配对指令和帮助统一使用 `/tab`。命令参数和普通聊天原文不改写。
-
-工程目录、Session ID、原生 Agent ID 与 SQLite 表结构互相独立：移动工程目录需要同步更新配置 `workspaces` 与已有会话的 `workspace`，仅改名不会重建任务树。服务只在无执行、审批、维护和终端接管时重启，继续使用同一数据目录。

@@ -1,6 +1,6 @@
 # 文档导航
 
-文档按当前仓库行为组织。功能用法、实现约束与验证方法分别维护，不以历史讨论代替已实现能力。
+从安装与接入开始，按任务协作、会话管理和运行维护查找操作指南；开发接口与架构说明单独列出。
 
 | 主题           | 文档                                                                                                                                                                    |
 | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -11,7 +11,7 @@
 | 会话与管理     | [使用手册](sessions-guide.md)、[会话控制](session-management.md)、[跨通道菜单](management-cards.md)                                                                     |
 | Bot 与群聊     | [角色、授权与群模式](bot-management.md)                                                                                                                                 |
 | 执行与交互     | [审批策略](session-approvals.md)、[审批/提问适配](chat-interactions.md)、[MCP 表单](mcp-elicitation.md)、[执行记录](execution-records.md)、[Agent 待办](agent-plans.md) |
-| 开发           | [架构](architecture.md)、[数据库](database.md)、[API](api.md)、[实现评审](implementation-review.md)、[贡献](../CONTRIBUTING.md)、[测试](testing.md)                     |
+| 开发           | [架构](architecture.md)、[数据库](database.md)、[API](api.md)、[功能与限制](capabilities.md)、[贡献](../CONTRIBUTING.md)、[测试](testing.md)                            |
 | 运行与验证     | [运维](operations.md)、[验收](acceptance.md)、[排错](troubleshooting.md)、[安全](../SECURITY.md)                                                                        |
 
 ## 核心概念

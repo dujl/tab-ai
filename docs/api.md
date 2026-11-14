@@ -104,10 +104,10 @@ API 与 Dashboard 使用同一服务，默认 `http://127.0.0.1:4317`。请求�
 
 工具按 runId/toolId 合并最后快照，审批按真实终态展示；缺失结果不猜测成功。原生待办按当前能力显示，轮次结束不自动完成剩余步骤。报告生成不启动工作任务或改变验收状态。详见 [执行记录](execution-records.md)、[待办](agent-plans.md)、[交付报告](session-reports.md)。
 
+会话 `maintenance` 与 `records` 查询附带 `tokenInformation`，提供与聊天信息区一致的上下文、消耗及口径详情；`maintenance.lastCompaction.tokens` 可包含本次压缩前后计数。`records.usage` 仅在已采集或原生历史补读的快照与当前 Agent/nativeId 匹配时返回，不复用重置前的事件作为当前用量；只读补查不改变管理 revision 和会话更新时间。缺失计数不返回伪造的零或压缩率。
+
 ## Bot 与接入向导
 
 `POST /api/channels/:botId/role` 为 `{manager}`；`/details` 为 `{displayName,defaultWorkspace}`；`/group-mode` 为 `{chatId,mode}`，只支持飞书群。这些写入要求配置持久化服务存在。`POST /api/management` 接收 group_mode.get/set 的结构化请求，本机授权仍由入口构造。
 
 `GET /api/setup` 查询说明、当前流程和草稿；`POST /api/setup/start` 开始；`GET /api/setup/:id` 查询；对应 POST `/verify`、`/confirm`、`/cancel` 完成验证、确认或取消。平台字段以 `setup/service.ts` 的 setupInput 为准，建议使用网页或 CLI 向导，避免重复创建结果不确定的远端应用。
-
-会话 `maintenance` 与 `records` 查询附带 `tokenInformation`，提供与聊天信息区一致的上下文、消耗及口径详情；`maintenance.lastCompaction.tokens` 可包含本次压缩前后计数。`records.usage` 仅在已采集或原生历史补读的快照与当前 Agent/nativeId 匹配时返回，不复用重置前的事件作为当前用量；只读补查不改变管理 revision 和会话更新时间。缺失计数不返回伪造的零或压缩率。

@@ -2,7 +2,7 @@ import type { Session } from './types.js';
 
 export const MAX_SESSION_DEPTH = 8;
 export const MAX_SESSION_DESCENDANTS = 100;
-// Read legacy group-topic relationships without rewriting existing sessions.
+// Resolve explicit parents before group-topic links without changing stored sessions.
 export const sessionParentId = (s: Session): string | undefined =>
   s.parentSessionId ?? s.topicParentId;
 export const sameSessionScope = (a: Session, b: Session): boolean =>

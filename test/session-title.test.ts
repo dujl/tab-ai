@@ -62,7 +62,7 @@ test('manager-DM session list includes names/recent tasks, and local rename neve
     assert.match(list, /Codex · 空闲/);
     assert.match(list, /秘密/);
     assert.equal(f.agent.inputs.length, runs);
-    // The list is now a separate management-center view, even when opened from a topic.
+    // List queries use management-center scope even when opened from a topic.
     await f.manager.receive({ ...incoming('/tab list', 'alice', 'fixture-topic'), direct: true });
     assert.match(f.channel.sent.at(-1)!.text, /主聊天任务/);
     assert.match(f.channel.sent.at(-1)!.text, /秘密/);
