@@ -48,7 +48,9 @@ function form() {
       ? '使用微信扫描二维码，在手机确认登录；如要求验证码，按向导输入即可。无需填写 App ID 或 Secret。'
       : type === 'wecom'
         ? '使用企业微信扫码并在手机确认，自动获取 Bot ID 和 Secret；无需手工复制。授权后私聊机器人完成收发验证。'
-        : '使用飞书官方授权流程创建新应用。下一步会显示二维码和链接，在手机或电脑上确认即可取得凭证。';
+        : type === 'dingtalk'
+          ? '使用钉钉扫码，在手机确认创建或绑定机器人，凭证自动保存；随后私聊机器人发送“你好”，核对账号并确认启用。无需手工复制凭证或配对码。'
+          : '使用飞书官方授权流程创建新应用。下一步会显示二维码和链接，在手机或电脑上确认即可取得凭证。';
   $('credential-id').required = manual;
   $('credential-secret').required = manual;
   $('card-template-label').hidden = type !== 'dingtalk';
@@ -81,6 +83,7 @@ function methods() {
     if (draft.type === type)
       choices.push([`draft:${draft.id}`, `继续未完成配置 · ${draft.credentialId}`]);
   if (type === 'wecom') choices.push(['qr', '企业微信扫码创建 / 授权（推荐）']);
+  if (type === 'dingtalk') choices.push(['qr', '钉钉扫码创建 / 绑定（推荐）']);
   if (type === 'lark') choices.push(['qr', '扫码创建新机器人（推荐）']);
   if (type === 'wechat') choices.push(['qr', '微信扫码登录']);
   else choices.push(['manual', '已有机器人，填写凭证']);
@@ -121,6 +124,9 @@ function render() {
   };
   $('progress-title').textContent = titles[current.phase];
   $('progress-message').textContent = current.message;
+  $('suggested-bot-name').hidden =
+    current.type !== 'dingtalk' || current.phase !== 'authorizing' || !current.name;
+  $('bot-name').textContent = current.name || '';
   $('authorization').hidden = !current.url;
   if (current.url) $('authorization-link').href = current.url;
   $('auth-qr').hidden = !current.qrDataUrl;
@@ -233,6 +239,9 @@ $('restart-setup').onclick = safe(async () => {
 $('copy-pair').onclick = safe(async () => {
   await navigator.clipboard.writeText(current.pairCommand);
   $('copy-pair').textContent = '已复制';
+});
+$('copy-bot-name').onclick = safe(async () => {
+  await navigator.clipboard.writeText(current.name);
 });
 $('auth-form').onsubmit = (event) => {
   event.preventDefault();

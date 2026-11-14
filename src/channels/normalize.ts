@@ -110,14 +110,13 @@ export function normalizeLark(
 }
 
 const dingEvent = z.object({
-  msgId: z.string(),
+  msgId: z.string().min(1),
   msgtype: z.string(),
-  conversationId: z.string(),
-  conversationType: z.string(),
+  conversationId: z.string().min(1),
+  conversationType: z.enum(['1', '2']),
   senderStaffId: z.string().optional(),
-  senderId: z.string(),
+  senderId: z.string().min(1),
   text: z.object({ content: z.string() }).optional(),
-  sessionWebhook: z.string().optional(),
   isInAtList: z.boolean().optional(),
 });
 export function normalizeDingTalk(raw: unknown, account: string): Incoming | undefined {

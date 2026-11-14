@@ -3,6 +3,11 @@ import { registerApp } from '@larksuiteoapi/node-sdk';
 import { z } from 'zod';
 import { type Draft } from './storage.js';
 import {
+  registerDingTalk,
+  DingTalkRegistrationError,
+  type DingTalkRegistration,
+} from './dingtalk-registration.js';
+import {
   registerWecom,
   WecomRegistrationError,
   type WecomRegistration,
@@ -42,11 +47,13 @@ export const GUIDES = {
     title: '钉钉',
     url: 'https://open-dev.dingtalk.com/',
     steps: [
-      '创建企业内部应用，添加机器人能力。',
-      '消息接收模式选择 Stream，发布应用并设置可用范围。',
+      '推荐使用钉钉扫码，在手机确认创建或绑定机器人，Client ID 和 Secret 自动保存。',
+      '扫码完成后私聊机器人发送“你好”，收到回执后在向导核对账号并确认启用，无需复制配对码。',
+      '已有应用也可手动填写凭证：开启 Stream 机器人、发布并设置可用范围。',
+      '长任务回复需要开通单聊及群聊对应的机器人主动发送消息权限；按官方发送接口文档检查授权，权限变更后发布生效。',
       '复制 Client ID（AppKey）和 Client Secret（AppSecret）到下一步。',
       '按钮卡片可选：开通互动卡片实例写权限，按 docs/chat-interactions.md 创建 tab-ai 模板，并填写模板 ID；不配置时使用文字回答。',
-      '用自己的账号私聊机器人发送配对码。无需填写用户 staffId。',
+      '手动凭证接入需私聊发送向导给出的配对码；无需填写用户 staffId。',
     ],
   },
   wecom: {
@@ -64,6 +71,10 @@ export const GUIDES = {
 export class SetupError extends Error {}
 export type Registration = Awaited<ReturnType<typeof registerApp>>;
 export interface SetupProviders {
+  dingtalkRegister?(
+    signal: AbortSignal,
+    onQr: (url: string, seconds: number) => void,
+  ): Promise<DingTalkRegistration>;
   wecomRegister?(
     signal: AbortSignal,
     onQr: (url: string, seconds: number) => void,
@@ -82,6 +93,7 @@ export interface SetupProviders {
   identify(draft: Draft, signal: AbortSignal): Promise<{ name: string; botOpenId?: string }>;
 }
 export const providers: SetupProviders = {
+  dingtalkRegister: registerDingTalk,
   wecomRegister: registerWecom,
   wechatLogin: loginWechat,
   register: (domain, signal, onUrl, name) =>
@@ -100,7 +112,8 @@ export const providers: SetupProviders = {
       onQRCodeReady: (info) => onUrl(info.url, info.expireIn),
     }),
   async identify(draft, signal) {
-    if (draft.type !== 'lark') return { name: `${GUIDES[draft.type].title}机器人` };
+    if (draft.type !== 'lark')
+      return { name: draft.displayName ?? `${GUIDES[draft.type].title}机器人` };
     const base = draft.domain === 'lark' ? 'https://open.larksuite.com' : 'https://open.feishu.cn';
     const requestSignal = AbortSignal.any([signal, AbortSignal.timeout(15_000)]);
     const tokenResponse = await fetch(`${base}/open-apis/auth/v3/tenant_access_token/internal`, {
@@ -138,6 +151,7 @@ export const providers: SetupProviders = {
 };
 
 export function safeSetupError(error: unknown): string {
+  if (error instanceof DingTalkRegistrationError) return error.message;
   if (error instanceof WecomRegistrationError) return error.message;
   if (error instanceof WechatApiError)
     return error.code === -14

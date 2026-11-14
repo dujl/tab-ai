@@ -106,7 +106,7 @@ export async function runWizard(configFile: string): Promise<void> {
           choices: [
             { name: '飞书 / Lark（支持扫码创建）', value: 'lark' as const },
             { name: '微信（扫码登录）', value: 'wechat' as const },
-            { name: '钉钉', value: 'dingtalk' as const },
+            { name: '钉钉（支持扫码创建）', value: 'dingtalk' as const },
             { name: '企业微信（支持扫码创建）', value: 'wecom' as const },
           ],
         },
@@ -118,7 +118,7 @@ export async function runWizard(configFile: string): Promise<void> {
           name: `继续未完成配置 · ${d.credentialId}`,
           value: `draft:${d.id}`,
         })),
-        ...(['lark', 'wechat', 'wecom'].includes(type)
+        ...(['lark', 'wechat', 'wecom', 'dingtalk'].includes(type)
           ? [
               {
                 name:
@@ -126,7 +126,9 @@ export async function runWizard(configFile: string): Promise<void> {
                     ? '微信扫码登录'
                     : type === 'wecom'
                       ? '企业微信扫码创建 / 授权（推荐）'
-                      : '扫码创建新机器人（推荐）',
+                      : type === 'dingtalk'
+                        ? '钉钉扫码创建 / 绑定（推荐）'
+                        : '扫码创建新机器人（推荐）',
                 value: 'qr',
               },
             ]

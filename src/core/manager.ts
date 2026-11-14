@@ -1846,6 +1846,12 @@ export class Manager {
     this.store.event(session.id, 'agent_run', JSON.stringify({ ...run, status: 'running' }));
     this.controls.refresh(session.id);
     try {
+      if (message.route.platform === 'dingtalk' && !session.imEntry)
+        delivery = this.send(
+          message,
+          '已收到，正在处理。首次启动可能需要一些时间；可发送 /tab status 查看状态，或 /tab stop 中断。',
+          session.id,
+        );
       const attachments = message.topicUpdateId ? [] : (session.pendingAttachments ?? []);
       const context =
         !session.taskId && message.groupMessage && this.groupMode(message) !== 'mention'

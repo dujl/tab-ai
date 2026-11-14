@@ -377,6 +377,7 @@ test('DingTalk uses native webhook Markdown without requiring a card template or
   try {
     const m = incoming('');
     m.route.platform = 'dingtalk';
+    m.route.account = 'test';
     await channel.sendManagement(m, managementView('menu', 'body <at id=all>'));
     assert.equal(payloads[0].msgtype, 'markdown');
     assert.match(payloads[0].markdown.text, /\/tab status/);
