@@ -51,7 +51,11 @@ test('Codex local sessions use on-request without prompt overrides and handle co
       .map((line) => JSON.parse(line));
     const starts = trace.filter((m) => m.method === 'thread/start');
     assert.equal(starts.length, 1);
-    assert.deepEqual(starts[0].params, { cwd: f.dir, approvalPolicy: 'on-request' });
+    assert.deepEqual(starts[0].params, {
+      cwd: f.dir,
+      approvalPolicy: 'on-request',
+      approvalsReviewer: 'user',
+    });
     assert.equal(trace.filter((m) => m.method === 'thread/resume').length, 1);
     assert.deepEqual(trace.find((m) => m.method === 'turn/start').params, {
       threadId: 'native-test-1',
@@ -325,6 +329,7 @@ test('Codex discovers native capabilities without a thread/turn, and applies ses
       threadId: 'native-test-1',
       cwd: f.dir,
       approvalPolicy: 'on-request',
+      approvalsReviewer: 'user',
       model: 'model-b',
     });
     assert.deepEqual(turn.params, {
@@ -343,6 +348,8 @@ test('Codex discovers native capabilities without a thread/turn, and applies ses
       f.dir,
       '-c',
       'approval_policy="on-request"',
+      '-c',
+      'approvals_reviewer="user"',
       '--model',
       'model-b',
       '-c',
@@ -709,6 +716,7 @@ test('Codex resumes the same native ID in a new workspace and sets actual turn c
       threadId: 'native-test-1',
       cwd: target,
       approvalPolicy: 'on-request',
+      approvalsReviewer: 'user',
     });
     assert.equal(calls.find((c) => c.method === 'turn/start').params.cwd, target);
     assert.equal(s.nativeId, 'native-test-1');
@@ -720,6 +728,8 @@ test('Codex resumes the same native ID in a new workspace and sets actual turn c
       target,
       '-c',
       'approval_policy="on-request"',
+      '-c',
+      'approvals_reviewer="user"',
     ]);
   } finally {
     await f.cleanup();

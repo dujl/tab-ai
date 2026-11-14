@@ -8,7 +8,14 @@ export function nativeApprovalPolicy(
   session: Pick<Session, 'agent' | 'approvalPolicy'>,
 ): string | undefined {
   const mode = selectedApprovalPolicy(session);
+  if (session.agent === 'codex' && mode === 'on-request-auto-review') return 'on-request';
   return mode === 'native' ? undefined : mode;
+}
+export function nativeApprovalReviewer(session: Pick<Session, 'agent' | 'approvalPolicy'>) {
+  if (session.agent !== 'codex' || selectedApprovalPolicy(session) === 'native') return undefined;
+  return session.approvalPolicy === 'on-request-auto-review'
+    ? ('auto_review' as const)
+    : ('user' as const);
 }
 export function approvalModes(agent: AgentKind) {
   const native = {
@@ -29,6 +36,12 @@ export function approvalModes(agent: AgentKind) {
         id: 'on-request',
         label: '由 Codex 按需申请审批',
         description: 'Codex 在需要额外权限时申请审批；已获准范围内的操作直接执行。',
+      },
+      {
+        id: 'on-request-auto-review',
+        label: '按需审批 · 原生自动审查',
+        description:
+          '本会话的额外权限申请由 Codex 原生自动审查，按风险与用户授权批准或拒绝，减少人工确认；不是全部允许。可能增加模型用量，需原生版本支持。',
       },
       {
         id: 'never',
