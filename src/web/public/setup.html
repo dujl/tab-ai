@@ -89,6 +89,11 @@
         <div id="phase" class="eyebrow"></div>
         <h2 id="progress-title">正在连接</h2>
         <p id="progress-message"></p>
+        <div id="suggested-bot-name" class="setup-note" hidden>
+          <p>建议机器人名称：<code id="bot-name"></code></p>
+          <button id="copy-bot-name" type="button">复制名称</button>
+          <p class="footnote">在钉钉官方页面设置此名称；本地显示名会自动保存。</p>
+        </div>
         <div id="authorization" hidden>
           <img id="auth-qr" alt="平台授权二维码" hidden />
           <p>
@@ -141,8 +146,7 @@
         </div>
       </section>
       <p class="footnote">
-        飞书、企业微信支持扫码创建 /
-        授权并自动获取凭证；钉钉需要先在平台开通机器人，再填写凭证。个人微信支持扫码登录和文字私聊。
+        飞书、企业微信、钉钉支持扫码创建 / 授权并自动获取凭证。个人微信支持扫码登录和文字私聊。
       </p>
     </main>
     <dialog id="auth-dialog">

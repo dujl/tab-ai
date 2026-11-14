@@ -1,4 +1,9 @@
 import { DWClient, TOPIC_CARD, TOPIC_ROBOT } from 'dingtalk-stream';
+import { createHash } from 'node:crypto';
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { z } from 'zod';
+import { atomicJson } from '../setup/storage.js';
 import { type ChannelConfig, secret } from '../config.js';
 import {
   type Answer,
@@ -10,11 +15,13 @@ import {
 import { ApprovalDetailsDelivery } from './approval-details.js';
 import { CardRegistry, cardBody } from './cards.js';
 import { dingCardAction, dingCardData } from './dingtalk-cards.js';
+import { DingTalkApi } from './dingtalk-api.js';
 import { normalizeDingTalk } from './normalize.js';
 import { channelError, splitText } from './common.js';
 import type { ManagementView } from '../core/types.js';
 import { managementText } from '../core/management-view.js';
 import { approvalOptions } from '../core/approval-decisions.js';
+import { dingManagementMarkdown, dingMarkdownParts, hasDingMarkdown } from './dingtalk-markdown.js';
 
 export function checkedWebhook(value: unknown): string {
   if (typeof value !== 'string') throw new Error('Missing DingTalk session webhook');
@@ -30,6 +37,12 @@ export function checkedWebhook(value: unknown): string {
     throw new Error('Invalid DingTalk session webhook');
   return url.href;
 }
+const recipientSchema = z.object({
+  spaceId: z.string().min(1),
+  spaceType: z.enum(['IM_GROUP', 'IM_ROBOT']),
+  robotCode: z.string().min(1),
+  expires: z.number().finite(),
+});
 export class DingTalkChannel implements Channel {
   readonly platform = 'dingtalk' as const;
   readonly id: string;
@@ -39,73 +52,118 @@ export class DingTalkChannel implements Channel {
     string,
     { conversation: string; spaceId: string; spaceType: string }
   >();
-  private cardRecipients = new Map<
-    string,
-    { spaceId: string; spaceType: 'IM_GROUP' | 'IM_ROBOT'; robotCode: string }
-  >();
+  private cardRecipients = new Map<string, z.infer<typeof recipientSchema>>();
   private approvalDetails: ApprovalDetailsDelivery;
-  private token?: { value: string; expires: number };
-  private clientId: string;
-  private clientSecret: string;
+  private api: DingTalkApi;
+  private stopping = new AbortController();
+  private recipientFile?: string;
   // Short-lived signed callbacks stay in memory, never in transcripts or model input.
   private replies = new Map<string, { url: string; expires: number }>();
   constructor(
     private config: Extract<ChannelConfig, { type: 'dingtalk' }>,
     resolveSecret = secret,
+    dataDir?: string,
   ) {
     this.id = config.id;
     this.approvalDetails = new ApprovalDetailsDelivery(this.id, (message, text) =>
       this.send(message, text),
     );
-    this.clientId = resolveSecret(config.clientIdEnv);
-    this.clientSecret = resolveSecret(config.clientSecretEnv);
+    const clientId = resolveSecret(config.clientIdEnv),
+      clientSecret = resolveSecret(config.clientSecretEnv);
+    this.api = new DingTalkApi(clientId, clientSecret);
+    if (dataDir) {
+      const key = createHash('sha256')
+        .update(JSON.stringify([this.id, clientId]))
+        .digest('hex');
+      this.recipientFile = join(dataDir, 'dingtalk-recipients', `${key}.json`);
+      try {
+        if (existsSync(this.recipientFile)) {
+          const entries = z
+            .array(z.tuple([z.string(), recipientSchema]))
+            .max(2000)
+            .parse(JSON.parse(readFileSync(this.recipientFile, 'utf8')));
+          for (const [key, recipient] of entries)
+            if (recipient.expires > Date.now()) this.cardRecipients.set(key, recipient);
+        }
+      } catch {
+        channelError(this.id);
+      }
+    }
     this.client = new DWClient({
-      clientId: this.clientId,
-      clientSecret: this.clientSecret,
+      clientId,
+      clientSecret,
       debug: false,
       keepAlive: true,
     });
+    // Subscribe only to callbacks we handle, with an array owned by this bot.
+    // The SDK's default subscriptions array is shared between instances.
+    this.client.config.subscriptions = [];
   }
   async start(onMessage: (message: Incoming) => Promise<void>): Promise<void> {
     this.client.registerCallbackListener(TOPIC_ROBOT, (event) => {
-      void (async () => {
-        try {
-          const raw = JSON.parse(event.data) as Record<string, unknown>;
-          const message = normalizeDingTalk(raw, this.id);
-          if (message) {
-            if (
-              typeof raw.robotCode === 'string' &&
-              (raw.conversationType === '2' || typeof raw.senderStaffId === 'string')
-            ) {
-              this.cardRecipients.set(
-                JSON.stringify([message.route.conversation, message.route.sender]),
-                {
-                  spaceId:
-                    raw.conversationType === '2'
-                      ? message.route.conversation
-                      : String(raw.senderStaffId),
-                  spaceType: raw.conversationType === '2' ? 'IM_GROUP' : 'IM_ROBOT',
-                  robotCode: raw.robotCode,
-                },
-              );
+      try {
+        const raw = JSON.parse(event.data) as Record<string, unknown>;
+        const message = normalizeDingTalk(raw, this.id);
+        if (message) {
+          if (
+            typeof raw.robotCode === 'string' &&
+            raw.robotCode &&
+            (raw.conversationType === '2' ||
+              (typeof raw.senderStaffId === 'string' && raw.senderStaffId))
+          ) {
+            this.cardRecipients.set(
+              JSON.stringify([message.route.conversation, message.route.sender]),
+              {
+                spaceId:
+                  raw.conversationType === '2'
+                    ? message.route.conversation
+                    : String(raw.senderStaffId),
+                spaceType: raw.conversationType === '2' ? 'IM_GROUP' : 'IM_ROBOT',
+                robotCode: raw.robotCode,
+                expires: Date.now() + 30 * 86400_000,
+              },
+            );
+            for (const [key, recipient] of this.cardRecipients)
+              if (recipient.expires <= Date.now()) this.cardRecipients.delete(key);
+            while (this.cardRecipients.size > 2000)
+              this.cardRecipients.delete(this.cardRecipients.keys().next().value!);
+            // Recovery requires a non-secret proactive target. Never persist a
+            // signed sessionWebhook or raw provider payload in this cache.
+            try {
+              if (this.recipientFile) atomicJson(this.recipientFile, [...this.cardRecipients]);
+            } catch {
+              channelError(this.id);
             }
-            const expires =
-              typeof raw.sessionWebhookExpiredTime === 'number'
-                ? raw.sessionWebhookExpiredTime
-                : Date.now() + 55 * 60_000;
-            for (const [key, value] of this.replies)
-              if (value.expires < Date.now()) this.replies.delete(key);
-            this.replies.set(message.route.conversation, {
-              url: checkedWebhook(raw.sessionWebhook),
-              expires,
-            });
-            await onMessage(message);
           }
-          this.client.socketCallBackResponse(event.headers.messageId, { status: 'SUCCESS' });
-        } catch {
-          channelError(this.id);
+          for (const [key, value] of this.replies)
+            if (value.expires <= Date.now()) this.replies.delete(key);
+          if (raw.sessionWebhook !== undefined) {
+            try {
+              const url = checkedWebhook(raw.sessionWebhook),
+                expires =
+                  raw.sessionWebhookExpiredTime === undefined
+                    ? Date.now() + 55 * 60_000
+                    : raw.sessionWebhookExpiredTime;
+              if (
+                typeof expires === 'number' &&
+                Number.isFinite(expires) &&
+                expires > Date.now() &&
+                expires >= (this.replies.get(message.route.conversation)?.expires ?? 0)
+              )
+                this.replies.set(message.route.conversation, { url, expires });
+            } catch {
+              // Invalid/missing reply capabilities must not discard valid text.
+              channelError(this.id);
+            }
+          }
+          // Manager persists receipt and source before its first await. Robot
+          // CALLBACKs are fire-and-forget; ACK does not guarantee redelivery.
+          void onMessage(message).catch(() => channelError(this.id));
         }
-      })();
+      } catch {
+        channelError(this.id);
+      }
+      this.acknowledge(event.headers.messageId, { status: 'SUCCESS' });
     });
     this.client.registerCallbackListener(TOPIC_CARD, (event) => {
       let result: object = {};
@@ -126,12 +184,21 @@ export class DingTalkChannel implements Channel {
       } catch {
         channelError(this.id);
       }
-      this.client.socketCallBackResponse(event.headers.messageId, result);
+      this.acknowledge(event.headers.messageId, result);
     });
-    await this.client.connect();
-    if (!this.client.connected) {
+    try {
+      await this.client.connect();
+      if (!this.client.connected) throw new Error('not connected');
+    } catch {
       this.client.disconnect();
       throw new Error('钉钉连接失败，请检查凭证、Stream 模式、应用发布状态和网络。');
+    }
+  }
+  private acknowledge(messageId: string, result: object): void {
+    try {
+      this.client.socketCallBackResponse(messageId, result);
+    } catch {
+      channelError(this.id);
     }
   }
   private async cardApi(
@@ -139,35 +206,12 @@ export class DingTalkChannel implements Channel {
     path: string,
     body: unknown,
   ): Promise<Record<string, unknown>> {
-    if (!this.token || this.token.expires <= Date.now()) {
-      const response = await fetch('https://api.dingtalk.com/v1.0/oauth2/accessToken', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ appKey: this.clientId, appSecret: this.clientSecret }),
-        signal: AbortSignal.timeout(15_000),
-        redirect: 'error',
-      });
-      if (!response.ok) throw new Error('钉钉卡片认证失败');
-      const value = (await response.json()) as { accessToken?: string; expireIn?: number };
-      if (!value.accessToken || typeof value.expireIn !== 'number')
-        throw new Error('钉钉卡片认证失败');
-      this.token = {
-        value: value.accessToken,
-        expires: Date.now() + Math.max(0, value.expireIn - 60) * 1000,
-      };
-    }
-    const response = await fetch(`https://api.dingtalk.com/v1.0/card/instances${path}`, {
+    const value = await this.api.request(
       method,
-      headers: {
-        'Content-Type': 'application/json',
-        'x-acs-dingtalk-access-token': this.token.value,
-      },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(15_000),
-      redirect: 'error',
-    });
-    if (!response.ok) throw new Error('钉钉拒绝卡片请求');
-    const value = (await response.json()) as Record<string, unknown>;
+      `/v1.0/card/instances${path}`,
+      body,
+      this.budget(),
+    );
     if (value.success !== true) throw new Error('钉钉卡片请求未确认成功');
     return value;
   }
@@ -191,7 +235,7 @@ export class DingTalkChannel implements Channel {
     const recipient = this.cardRecipients.get(
       JSON.stringify([message.route.conversation, message.route.sender]),
     );
-    if (!this.config.cardTemplateId || !recipient) return;
+    if (!this.config.cardTemplateId || !recipient || recipient.expires <= Date.now()) return;
     const batch = this.cards.open(message, request, answer),
       sent = new Set<string>();
     if (
@@ -253,57 +297,138 @@ export class DingTalkChannel implements Channel {
       throw new Error('钉钉卡片投递失败或结果未知');
     }
   }
-  async send(message: Incoming, text: string): Promise<void> {
-    const reply = this.replies.get(message.route.conversation);
-    if (!reply || reply.expires <= Date.now())
-      throw new Error('DingTalk reply URL expired; send /tab last in the conversation');
-    for (const part of splitText(text)) {
-      const response = await fetch(reply.url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ msgtype: 'text', text: { content: part } }),
-        signal: AbortSignal.timeout(15_000),
-        redirect: 'error',
-      });
-      if (!response.ok) throw new Error('DingTalk delivery failed');
-      const result = (await response.json()) as { errcode?: number };
-      if (result.errcode !== 0) throw new Error('DingTalk rejected the message');
+  private budget(signal?: AbortSignal): AbortSignal {
+    return AbortSignal.any([
+      this.stopping.signal,
+      AbortSignal.timeout(15_000),
+      ...(signal ? [signal] : []),
+    ]);
+  }
+  async send(message: Incoming, text: string, signal?: AbortSignal): Promise<void> {
+    signal = this.budget(signal);
+    if (hasDingMarkdown(text)) {
+      await this.sendMarkdown(message, text, 'tab-ai 回复', text, signal);
+      return;
+    }
+    await this.sendText(message, text, signal);
+  }
+  private async sendText(message: Incoming, text: string, signal: AbortSignal): Promise<void> {
+    for (const part of splitText(text))
+      await this.deliver(message, 'text', { content: part }, signal);
+  }
+  private async sendMarkdown(
+    message: Incoming,
+    text: string,
+    title: string,
+    fallback: string,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const parts = dingMarkdownParts(text);
+    for (const [index, part] of parts.entries()) {
+      if (part.format === 'text') {
+        await this.sendText(message, part.plain, signal);
+        continue;
+      }
+      const accepted = await this.deliver(
+        message,
+        'markdown',
+        { title, text: part.markdown },
+        signal,
+      );
+      if (!accepted) {
+        // A single management message can use its complete plain renderer.
+        // Multipart delivery falls back only for this rejected part.
+        await this.sendText(
+          message,
+          parts.length === 1 && index === 0 ? fallback : part.plain,
+          signal,
+        );
+      }
     }
   }
-  async sendManagement(message: Incoming, view: ManagementView): Promise<void> {
+  private async deliver(
+    message: Incoming,
+    type: 'text' | 'markdown',
+    content: Record<string, string>,
+    signal: AbortSignal,
+  ): Promise<boolean> {
+    signal.throwIfAborted();
+    if (message.route.platform !== this.platform || message.route.account !== this.id)
+      throw new Error('钉钉消息路由不属于当前机器人');
     const reply = this.replies.get(message.route.conversation);
-    if (!reply || reply.expires <= Date.now())
-      throw new Error('钉钉回复入口已过期，请在原聊天发送 /tab menu。');
-    // Native webhook Markdown needs no tenant template and does not invent
-    // callback buttons. Exact commands remain usable in every tenant.
-    for (const part of splitText(managementText(view), 5000)) {
-      const escaped = part.replace(
-        /[&<>]/g,
-        (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]!,
-      );
-      const response = await fetch(reply.url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          msgtype: 'markdown',
-          markdown: {
-            title: view.title,
-            text: escaped
-              .split('\n')
-              .map((line) => '> ' + line + '  ')
-              .join('\n'),
-          },
-        }),
-        signal: AbortSignal.timeout(15000),
-        redirect: 'error',
-      });
-      if (!response.ok) throw new Error('钉钉管理菜单投递失败或结果未知');
-      if (((await response.json()) as { errcode?: number }).errcode !== 0)
-        await this.send(message, part);
+    if (reply && reply.expires > Date.now()) {
+      let result: { errcode?: number };
+      try {
+        const response = await fetch(reply.url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ msgtype: type, [type]: content }),
+          signal,
+          redirect: 'error',
+        });
+        if (!response.ok) throw new Error('delivery failed');
+        result = (await response.json()) as { errcode?: number };
+        signal.throwIfAborted();
+      } catch {
+        throw new Error('钉钉消息投递失败或结果未知');
+      }
+      if (result?.errcode === 0) return true;
+      // A definitive webhook rejection permits the existing Markdown-to-text
+      // fallback. Network errors and malformed responses must never replay.
+      if (type === 'markdown' && typeof result?.errcode === 'number') return false;
+      throw new Error('钉钉拒绝消息');
     }
+    const recipient = this.cardRecipients.get(
+      JSON.stringify([message.route.conversation, message.route.sender]),
+    );
+    if (!recipient || recipient.expires <= Date.now())
+      throw new Error('钉钉回复入口已过期且缺少主动发送目标，请在原聊天发送 /tab last。');
+    const result = await this.api.request(
+      'POST',
+      recipient.spaceType === 'IM_GROUP'
+        ? '/v1.0/robot/groupMessages/send'
+        : '/v1.0/robot/oToMessages/batchSend',
+      {
+        robotCode: recipient.robotCode,
+        ...(recipient.spaceType === 'IM_GROUP'
+          ? { openConversationId: recipient.spaceId }
+          : { userIds: [recipient.spaceId] }),
+        msgKey: type === 'text' ? 'sampleText' : 'sampleMarkdown',
+        msgParam: JSON.stringify(content),
+      },
+      signal,
+    );
+    if (
+      typeof result.processQueryKey !== 'string' ||
+      !result.processQueryKey ||
+      (result.invalidStaffIdList !== undefined &&
+        (!Array.isArray(result.invalidStaffIdList) || result.invalidStaffIdList.length)) ||
+      (result.flowControlledStaffIdList !== undefined &&
+        (!Array.isArray(result.flowControlledStaffIdList) ||
+          result.flowControlledStaffIdList.length))
+    )
+      throw new Error('钉钉未确认消息受理，请检查机器人发送权限、可用范围和限流。');
+    return true;
+  }
+  async sendManagement(
+    message: Incoming,
+    view: ManagementView,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    await this.sendMarkdown(
+      message,
+      dingManagementMarkdown(view),
+      view.title,
+      managementText(view),
+      this.budget(signal),
+    );
   }
   async stop(): Promise<void> {
+    this.stopping.abort();
     this.approvalDetails.stop();
     this.client.disconnect();
+    this.replies.clear();
+    this.cardRecipients.clear();
+    this.cardTargets.clear();
   }
 }

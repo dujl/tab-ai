@@ -115,6 +115,7 @@ export async function serve(config: Config, configFile?: string): Promise<() => 
     );
     manager.refreshSessionCards();
     manager.tasks.start();
+    void manager.resumeInbox();
     console.log(`tab-ai listening on http://127.0.0.1:${config.port}`);
     console.log('Run tab-ai dashboard to get the authenticated local URL.');
   } catch (error) {

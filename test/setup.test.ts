@@ -450,7 +450,6 @@ test('duplicate platform accounts and overlapping setup attempts are rejected', 
     await until(() => f.service.status(duplicate.id).phase === 'error');
     assert.match(f.service.status(duplicate.id).message, /已经接入/);
     assert.equal(f.channels.length, 1);
-    assert.throws(() => f.service.start({ type: 'dingtalk', mode: 'qr' }));
     assert.throws(() => f.service.start({ type: 'lark', mode: 'manual', credentialId: 'bot' }));
   } finally {
     await f.cleanup();
@@ -539,49 +538,88 @@ test('WeChat startup errors retain safe actionable diagnostics', async () => {
   assert.ok(!safeSetupError(new Error('private-token')).includes('private-token'));
 });
 
-test('WeCom QR binds with ordinary private text and requires local confirmation, including after resume', async () => {
+for (const type of ['wecom', 'dingtalk'] as const)
+  test(`${type} QR binds with ordinary private text and requires local confirmation, including after resume`, async () => {
+    const f = setupFixture({
+      live: true,
+      providers: {
+        dingtalkRegister: async (_signal, onQr) => {
+          onQr('https://open-dev.dingtalk.com/openapp/registration/openClaw?user_code=test', 300);
+          return { clientId: 'auto-wecom-bot', clientSecret: 'auto-wecom-private-secret' };
+        },
+        wecomRegister: async (_signal, onQr) => {
+          onQr('https://work.weixin.qq.com/ai/qc/c?key=test', 300);
+          return { botId: 'auto-wecom-bot', secret: 'auto-wecom-private-secret' };
+        },
+      },
+    });
+    try {
+      const start = f.service.start({ type, mode: 'qr' }),
+        ready = await pairing(f.service, start.id);
+      assert.equal(ready.pairCommand, undefined);
+      assert.equal(ready.url, undefined);
+      assert.equal(f.service.storage.draft(start.id).pairingMode, 'message');
+      assert.equal(f.service.storage.drafts().length, 1);
+      assert.ok(!JSON.stringify(f.service.current()).includes('auto-wecom-private-secret'));
+      assert.ok(!JSON.stringify(f.service.storage.drafts()).includes('auto-wecom-private-secret'));
+      assert.equal(loadConfig(f.file).channels.length, 0);
+      await f.channels[0]!.emit('   ');
+      await f.channels[0]!.emit('hello', 'alice', false);
+      assert.equal(f.service.status(start.id).phase, 'pairing');
+      assert.equal(f.received.length, 0);
+      await f.service.cancel(start.id);
+      const resumed = f.service.start({ type, mode: 'draft', draftId: start.id }),
+        again = await pairing(f.service, resumed.id);
+      assert.equal(again.pairCommand, undefined);
+      await f.channels[1]!.emit('hello');
+      assert.equal(f.service.status(resumed.id).phase, 'paired');
+      assert.equal(f.service.status(resumed.id).candidate?.sender, 'alice');
+      assert.equal(loadConfig(f.file).channels.length, 0);
+      await f.channels[1]!.emit('another user', 'eve');
+      assert.equal(f.service.status(resumed.id).candidate?.sender, 'alice');
+      assert.equal(f.received.length, 0);
+      await f.service.confirm(resumed.id);
+      const config = loadConfig(f.file);
+      assert.equal(config.channels[0]!.type, type);
+      assert.deepEqual(config.channels[0]!.allowedUsers, ['alice']);
+      assert.ok(!readFileSync(f.file, 'utf8').includes('auto-wecom-private-secret'));
+      assert.equal(statSync(join(config.dataDir, 'credentials.json')).mode & 0o777, 0o600);
+      await f.channels[1]!.emit('real task');
+      assert.equal(f.received.length, 1);
+    } finally {
+      await f.cleanup();
+    }
+  });
+
+test('DingTalk QR names include the project, survive resume, and do not reuse cancelled reservations', async () => {
+  let sequence = 0;
   const f = setupFixture({
-    live: true,
     providers: {
-      wecomRegister: async (_signal, onQr) => {
-        onQr('https://work.weixin.qq.com/ai/qc/c?key=test', 300);
-        return { botId: 'auto-wecom-bot', secret: 'auto-wecom-private-secret' };
+      dingtalkRegister: async (_signal, onQr) => {
+        onQr('https://open-dev.dingtalk.com/openapp/registration/openClaw?user_code=test', 300);
+        return { clientId: `ding-${++sequence}`, clientSecret: 'secret' };
       },
     },
   });
   try {
-    const start = f.service.start({ type: 'wecom', mode: 'qr' }),
-      ready = await pairing(f.service, start.id);
-    assert.equal(ready.pairCommand, undefined);
-    assert.equal(ready.url, undefined);
-    assert.equal(f.service.storage.draft(start.id).pairingMode, 'message');
-    assert.equal(f.service.storage.drafts().length, 1);
-    assert.ok(!JSON.stringify(f.service.current()).includes('auto-wecom-private-secret'));
-    assert.ok(!JSON.stringify(f.service.storage.drafts()).includes('auto-wecom-private-secret'));
-    assert.equal(loadConfig(f.file).channels.length, 0);
-    await f.channels[0]!.emit('   ');
-    await f.channels[0]!.emit('hello', 'alice', false);
-    assert.equal(f.service.status(start.id).phase, 'pairing');
-    assert.equal(f.received.length, 0);
-    await f.service.cancel(start.id);
-    const resumed = f.service.start({ type: 'wecom', mode: 'draft', draftId: start.id }),
-      again = await pairing(f.service, resumed.id);
-    assert.equal(again.pairCommand, undefined);
+    const first = f.service.start({ type: 'dingtalk', mode: 'qr' });
+    assert.equal(first.name, 'tab-ai-bot1');
+    assert.match(first.message, /建议名称：tab-ai-bot1/);
+    assert.equal((await pairing(f.service, first.id)).name, 'tab-ai-bot1');
+    assert.equal(f.service.storage.draft(first.id).displayName, 'tab-ai-bot1');
+    await f.service.cancel(first.id);
+    const resumed = f.service.start({ type: 'dingtalk', mode: 'draft', draftId: first.id });
+    assert.equal((await pairing(f.service, resumed.id)).name, 'tab-ai-bot1');
     await f.channels[1]!.emit('hello');
-    assert.equal(f.service.status(resumed.id).phase, 'paired');
-    assert.equal(f.service.status(resumed.id).candidate?.sender, 'alice');
-    assert.equal(loadConfig(f.file).channels.length, 0);
-    await f.channels[1]!.emit('another user', 'eve');
-    assert.equal(f.service.status(resumed.id).candidate?.sender, 'alice');
-    assert.equal(f.received.length, 0);
     await f.service.confirm(resumed.id);
-    const config = loadConfig(f.file);
-    assert.equal(config.channels[0]!.type, 'wecom');
-    assert.deepEqual(config.channels[0]!.allowedUsers, ['alice']);
-    assert.ok(!readFileSync(f.file, 'utf8').includes('auto-wecom-private-secret'));
-    assert.equal(statSync(join(config.dataDir, 'credentials.json')).mode & 0o777, 0o600);
-    await f.channels[1]!.emit('real task');
-    assert.equal(f.received.length, 1);
+    assert.equal(loadConfig(f.file).channels[0]!.displayName, 'tab-ai-bot1');
+    const second = f.service.start({ type: 'dingtalk', mode: 'qr' });
+    assert.equal(second.name, 'tab-ai-bot2');
+    await pairing(f.service, second.id);
+    await f.service.cancel(second.id);
+    const third = f.service.start({ type: 'dingtalk', mode: 'qr' });
+    assert.equal(third.name, 'tab-ai-bot3');
+    await pairing(f.service, third.id);
   } finally {
     await f.cleanup();
   }
@@ -608,6 +646,62 @@ test('WeCom credentials issued during cancellation survive as a draft without ac
     assert.equal(loadConfig(f.file).channels.length, 0);
   } finally {
     await f.cleanup();
+  }
+});
+
+test('DingTalk credentials issued during cancellation survive as a draft without activating the bot', async () => {
+  let release!: (value: { clientId: string; clientSecret: string }) => void;
+  const f = setupFixture({
+    providers: {
+      dingtalkRegister: () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    },
+  });
+  try {
+    const start = f.service.start({ type: 'dingtalk', mode: 'qr' });
+    await f.service.cancel(start.id);
+    release({ clientId: 'late-bot', clientSecret: 'late-secret' });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(f.service.storage.drafts().length, 1);
+    assert.equal(f.channels.length, 0);
+    assert.equal(f.service.status(start.id).phase, 'cancelled');
+    assert.equal(loadConfig(f.file).channels.length, 0);
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test('DingTalk QR capability errors and untrusted URLs never fall through to Lark registration', async () => {
+  for (const enabled of [false, true]) {
+    const f = setupFixture({
+      providers: {
+        register: async () => {
+          assert.fail('DingTalk must not register a Lark bot');
+        },
+        ...(enabled
+          ? {
+              dingtalkRegister: async (
+                _signal: AbortSignal,
+                onQr: (url: string, seconds: number) => void,
+              ) => {
+                onQr('https://evil.example/registration?user_code=test', 300);
+                return { clientId: 'untrusted', clientSecret: 'secret' };
+              },
+            }
+          : {}),
+      },
+    });
+    try {
+      const start = f.service.start({ type: 'dingtalk', mode: 'qr' });
+      await until(() => f.service.status(start.id).phase === 'error');
+      assert.equal(f.service.status(start.id).url, undefined);
+      assert.equal(f.channels.length, 0);
+      assert.equal(f.service.storage.drafts().length, 0);
+    } finally {
+      await f.cleanup();
+    }
   }
 });
 test('setup persists the explicitly chosen manager role; omitted role never grants global access', async () => {

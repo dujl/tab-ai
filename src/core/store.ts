@@ -34,8 +34,21 @@ export interface StoredEvent {
   text: string;
   at: number;
 }
+export interface InboxMessage {
+  id: string;
+  state: 'pending' | 'processing' | 'done' | 'interrupted';
+  message: Incoming;
+  detail?: string;
+}
+export const INBOX_LIMITS = {
+  rows: 1000,
+  bytes: 32 * 1024 * 1024,
+  messageBytes: 256 * 1024,
+} as const;
+export class InboxCapacityError extends Error {}
 export class Store {
   private db: DatabaseSync;
+  private receiptCleanup?: NodeJS.Timeout;
   readonly reports: ReportStore;
   private unifiedTasks = false;
   taskModelUnified(): boolean {
@@ -117,6 +130,8 @@ export class Store {
       CREATE INDEX IF NOT EXISTS sessions_parent ON sessions(coalesce(json_extract(data,'$.parentSessionId'),json_extract(data,'$.topicParentId')));
       CREATE TABLE IF NOT EXISTS bindings (route_key TEXT PRIMARY KEY, session_id TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS receipts (key TEXT PRIMARY KEY, at INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS message_inbox (id TEXT PRIMARY KEY, receipt_key TEXT UNIQUE NOT NULL, state TEXT NOT NULL, data TEXT NOT NULL, detail TEXT, at INTEGER NOT NULL);
+      CREATE INDEX IF NOT EXISTS message_inbox_state ON message_inbox(state,at);
       CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL, type TEXT NOT NULL, text TEXT NOT NULL, at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS session_cards (session_id TEXT PRIMARY KEY, id TEXT UNIQUE NOT NULL, data TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS group_messages (id INTEGER PRIMARY KEY AUTOINCREMENT, account TEXT NOT NULL, chat TEXT NOT NULL, thread TEXT NOT NULL, message_id TEXT NOT NULL, sender TEXT NOT NULL, text TEXT NOT NULL, at INTEGER NOT NULL, UNIQUE(account,message_id));
@@ -220,7 +235,18 @@ export class Store {
     }
     this.db.prepare('DELETE FROM group_messages WHERE at < ?').run(Date.now() - 86400_000);
     this.syncInteractiveTasks();
-    this.db.prepare('DELETE FROM receipts WHERE at < ?').run(Date.now() - 7 * 86400_000);
+    this.db
+      .prepare("UPDATE message_inbox SET state='interrupted',detail=? WHERE state='processing'")
+      .run('处理可能已开始，未自动重跑；请核对原文和会话历史。');
+    this.db.prepare("DELETE FROM message_inbox WHERE state='done'").run();
+    this.pruneReceipts();
+    this.receiptCleanup = setInterval(() => {
+      try {
+        this.pruneReceipts();
+      } catch {
+        console.error('Receipt cleanup failed');
+      }
+    }, 60_000).unref();
   }
   atomic<T>(fn: () => T): T {
     this.db.exec('BEGIN IMMEDIATE');
@@ -296,6 +322,95 @@ export class Store {
       this.db.prepare('INSERT OR IGNORE INTO receipts VALUES (?, ?)').run(key, Date.now())
         .changes === 1
     );
+  }
+  acceptIncoming(message: Incoming): string | undefined {
+    return this.unit(() => {
+      const key = JSON.stringify([message.route.platform, message.route.account, message.id]);
+      if (!this.claim(key)) return;
+      const id = randomUUID();
+      // Persist normalized text and route only, never signed callbacks or raw events.
+      const source: Incoming = {
+        id: message.id,
+        text: message.text,
+        route: { ...message.route },
+        direct: message.direct,
+        receivedAt: message.receivedAt ?? Date.now(),
+      };
+      const data = JSON.stringify(source);
+      const size = Buffer.byteLength(data);
+      if (size > INBOX_LIMITS.messageBytes)
+        throw new InboxCapacityError(
+          '消息超过收件箱单条 256 KiB 限制，本条未接收或执行；请缩短后重发。',
+        );
+      const usage = this.db
+        .prepare(
+          'SELECT count(*) AS rows,coalesce(sum(length(CAST(data AS BLOB)) + 1024),0) AS bytes FROM message_inbox',
+        )
+        .get()!;
+      // Reserve space for an interruption diagnostic. The enclosing transaction
+      // rolls the receipt back on rejection, allowing an explicit later retry.
+      if (
+        Number(usage.rows) >= INBOX_LIMITS.rows ||
+        Number(usage.bytes) + size + 1024 > INBOX_LIMITS.bytes
+      )
+        throw new InboxCapacityError(
+          '收件箱已达 1000 条或 32 MiB 上限，本条未接收或执行。请用 /tab inbox 核对中断记录，确认后用 /tab inbox dismiss <短ID> 清理，再重新发送。',
+        );
+      this.db
+        .prepare('INSERT INTO message_inbox VALUES (?,?,?,?,?,?)')
+        .run(id, key, 'pending', data, null, Date.now());
+      return id;
+    });
+  }
+  inbox(): InboxMessage[] {
+    return this.db
+      .prepare(
+        "SELECT id,state,data,detail FROM message_inbox WHERE state != 'done' ORDER BY at,rowid",
+      )
+      .all()
+      .map((row) => ({
+        id: String(row.id),
+        state: String(row.state) as InboxMessage['state'],
+        message: JSON.parse(String(row.data)) as Incoming,
+        ...(row.detail ? { detail: String(row.detail) } : {}),
+      }));
+  }
+  startIncoming(id: string): boolean {
+    return (
+      this.db
+        .prepare("UPDATE message_inbox SET state='processing' WHERE id=? AND state='pending'")
+        .run(id).changes === 1
+    );
+  }
+  finishIncoming(id: string, interrupted = false, detail?: string): void {
+    if (!interrupted) {
+      this.releaseIncoming(id);
+      return;
+    }
+    this.db
+      .prepare("UPDATE message_inbox SET state='interrupted',detail=? WHERE id=?")
+      .run(detail?.slice(0, 256) ?? null, id);
+  }
+  dismissIncoming(id: string): boolean {
+    return this.releaseIncoming(id, true);
+  }
+  private releaseIncoming(id: string, interruptedOnly = false): boolean {
+    return this.unit(() => {
+      const condition = interruptedOnly ? "id=? AND state='interrupted'" : 'id=?';
+      this.db
+        .prepare(
+          `UPDATE receipts SET at=? WHERE key IN (SELECT receipt_key FROM message_inbox WHERE ${condition})`,
+        )
+        .run(Date.now(), id);
+      return this.db.prepare(`DELETE FROM message_inbox WHERE ${condition}`).run(id).changes === 1;
+    });
+  }
+  private pruneReceipts(): void {
+    this.db
+      .prepare(
+        'DELETE FROM receipts WHERE at < ? AND key NOT IN (SELECT receipt_key FROM message_inbox)',
+      )
+      .run(Date.now() - 7 * 86400_000);
   }
   get(id: string): Session | undefined {
     const row = this.db.prepare('SELECT data FROM sessions WHERE id=?').get(id);
@@ -712,6 +827,7 @@ export class Store {
     this.db.prepare('DELETE FROM group_messages WHERE account=? AND chat=?').run(account, chat);
   }
   close(): void {
+    clearInterval(this.receiptCleanup);
     this.db.close();
   }
   card(sessionId: string): SessionCardRecord | undefined {

@@ -1,6 +1,7 @@
 import { larkPermissionUrl } from '../core/group-mode.js';
 import { wechatBase, wechatQrUrl } from '../channels/wechat-api.js';
 import { wecomQrUrl } from './wecom-registration.js';
+import { dingtalkQrUrl } from './dingtalk-registration.js';
 import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 import QRCode from 'qrcode';
@@ -29,8 +30,6 @@ export const setupInput = z
   })
   .strict()
   .superRefine((v, ctx) => {
-    if (v.mode === 'qr' && !['lark', 'wechat', 'wecom'].includes(v.type))
-      ctx.addIssue({ code: 'custom', message: '此平台暂不支持扫码创建。' });
     if (v.type === 'wechat' && v.mode === 'manual')
       ctx.addIssue({ code: 'custom', message: '微信请使用扫码登录。' });
     if (v.mode === 'manual' && (!v.credentialId || !v.credentialSecret))
@@ -170,6 +169,35 @@ export class SetupService {
         expectedUserId: result.userId,
         createdAt: Date.now(),
       };
+      this.storage.saveDraft(draft);
+    } else if (input.mode === 'qr' && input.type === 'dingtalk') {
+      if (!this.deps.providers.dingtalkRegister)
+        throw new SetupError('当前实例不支持钉钉扫码，请更新服务。');
+      const name = this.storage.reserveBotName();
+      attempt.view.name = name;
+      const result = await this.deps.providers.dingtalkRegister(signal, (url, seconds) => {
+        if (signal.aborted) return;
+        attempt.view.url = dingtalkQrUrl(url);
+        void QRCode.toDataURL(url, { width: 400, margin: 2 })
+          .then((image) => {
+            if (!signal.aborted && attempt.view.url === url) attempt.view.qrDataUrl = image;
+          })
+          .catch(() => {});
+        attempt.view.expiresAt = Math.min(attempt.view.expiresAt, Date.now() + seconds * 1000);
+        attempt.view.message = `请使用钉钉扫码，在手机上确认创建或绑定机器人；建议名称：${name}。凭证将自动保存，无需手工复制。钉钉名称需在官方页面设置，本地显示名会保存为此名称。`;
+      });
+      draft = {
+        id: attempt.view.id,
+        type: 'dingtalk',
+        domain: 'feishu',
+        credentialId: result.clientId,
+        credentialSecret: result.clientSecret,
+        createdAt: Date.now(),
+        displayName: name,
+        pairingMode: 'message',
+        ...(input.cardTemplateId ? { cardTemplateId: input.cardTemplateId } : {}),
+      };
+      // Preserve issued credentials if cancellation raced with authorization.
       this.storage.saveDraft(draft);
     } else if (input.mode === 'qr' && input.type === 'wecom') {
       if (!this.deps.providers.wecomRegister)
@@ -334,7 +362,7 @@ export class SetupService {
       await channel.stop();
       return;
     }
-    attempt.view.name = identity.name;
+    attempt.view.name = draft.displayName ?? identity.name;
     attempt.view.phase = 'pairing';
     const messagePairing = this.messagePairing(draft);
     attempt.view.pairCommand = messagePairing
@@ -344,7 +372,7 @@ export class SetupService {
       draft.type === 'wechat'
         ? '请用刚才扫码的微信账号，私聊机器人发送任意文字；收到测试回执后确认启用。'
         : messagePairing
-          ? '请用你的企业微信账号私聊机器人发送“你好”等任意文字，无需配对命令；收到回执后，在这里核对账号并确认启用。'
+          ? `请用你的${draft.type === 'dingtalk' ? '钉钉' : '企业微信'}账号私聊机器人发送“你好”等任意文字，无需配对命令；收到回执后，在这里核对账号并确认启用。`
           : '请私聊机器人发送下方配对命令。收到回执后，在这里确认绑定。';
     clearTimeout(attempt.timer);
     const duration = this.deps.timeoutMs ?? 5 * 60_000;
@@ -378,7 +406,10 @@ export class SetupService {
     }
   }
   private messagePairing(draft?: Draft): boolean {
-    return draft?.type === 'wechat' || (draft?.type === 'wecom' && draft.pairingMode === 'message');
+    return (
+      draft?.type === 'wechat' ||
+      ((draft?.type === 'wecom' || draft?.type === 'dingtalk') && draft.pairingMode === 'message')
+    );
   }
   private async pair(attempt: Attempt, message: Incoming): Promise<void> {
     if (

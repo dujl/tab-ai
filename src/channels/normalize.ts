@@ -110,14 +110,13 @@ export function normalizeLark(
 }
 
 const dingEvent = z.object({
-  msgId: z.string(),
+  msgId: z.string().min(1),
   msgtype: z.string(),
-  conversationId: z.string(),
-  conversationType: z.string(),
+  conversationId: z.string().min(1),
+  conversationType: z.enum(['1', '2']),
   senderStaffId: z.string().optional(),
-  senderId: z.string(),
+  senderId: z.string().min(1),
   text: z.object({ content: z.string() }).optional(),
-  sessionWebhook: z.string().optional(),
   isInAtList: z.boolean().optional(),
 });
 export function normalizeDingTalk(raw: unknown, account: string): Incoming | undefined {
@@ -128,7 +127,9 @@ export function normalizeDingTalk(raw: unknown, account: string): Incoming | und
   if (data.conversationType === '2' && data.isInAtList !== true) return;
   return {
     id: data.msgId,
-    text: data.text.content,
+    text: /^\s+\/tab(?:\s|$)/.test(data.text.content)
+      ? data.text.content.trimStart()
+      : data.text.content,
     direct: data.conversationType === '1',
     route: {
       platform: 'dingtalk',

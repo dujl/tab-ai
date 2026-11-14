@@ -48,7 +48,7 @@ import { virtualSessions, sameChat, sessionLabel, findChatSession } from './virt
 import { basename } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { type Config } from '../config.js';
-import { Store } from './store.js';
+import { Store, InboxCapacityError } from './store.js';
 import {
   type AgentAdapter,
   type AgentUsage,
@@ -142,6 +142,7 @@ const HELP = `tab-ai 管理命令（不会发送给 agent）：
 /tab status — 当前会话与等待项
 /tab main — 查询本聊天中你的主会话管理 ID 和原生 Agent ID
 /tab pending — 查看待回答问题及文字命令
+/tab inbox [短ID|dismiss 短ID] — 查看钉钉未处理或中断原文，或确认清理中断记录
 /tab group-mode [mention|context|auto] — 查看或设置本飞书群的行为模式
 /tab bot-role <BOT_ID> manager|scoped — Manager 修改 BOT 角色
 /tab bots — 管理员 BOT 单聊：查看 BOT 与角色
@@ -184,6 +185,8 @@ export class Manager {
   private closedSessions = new Set<string>();
   private routingAbort = new AbortController();
   private receiving = new Map<string, Promise<void>>();
+  private inboxRecovery?: Promise<void>;
+  private inboxAgain = false;
   private routerUnavailableUntil = 0;
   private routingActive = 0;
   private downloading = new Set<string>();
@@ -621,6 +624,7 @@ export class Manager {
     this.channels.set(channel.id, channel);
     this.controls.register(channel);
     this.registerManagement(channel);
+    void this.resumeInbox();
   }
   private channelContext(
     message: Pick<Incoming, 'route' | 'direct'>,
@@ -1054,16 +1058,59 @@ export class Manager {
     return !!channel?.allowedUsers.includes(message.route.sender);
   }
   async receive(message: Incoming): Promise<void> {
-    if (this.closing) return;
+    if (this.closing && message.route.platform !== 'dingtalk') return;
     message = { ...message, receivedAt: message.receivedAt ?? Date.now() };
     const group = message.route.platform === 'lark' && message.groupMessage;
     const mode = group ? this.groupMode(message) : 'mention';
-    const passive = group && !group.mentioned && mode !== 'auto';
     if (!this.authorized(message) && !(group && mode !== 'mention')) return;
-    if (
-      !this.store.claim(JSON.stringify([message.route.platform, message.route.account, message.id]))
-    )
+    // Inbox inspection/acknowledgement must remain available even when full.
+    const durable =
+      message.route.platform === 'dingtalk' && !/^\/tab\s+inbox(?:\s|$)/.test(message.text);
+    let inboxId: string | undefined;
+    try {
+      if (durable) inboxId = this.store.acceptIncoming(message);
+      if (
+        durable
+          ? !inboxId
+          : !this.store.claim(
+              JSON.stringify([message.route.platform, message.route.account, message.id]),
+            )
+      )
+        return;
+    } catch (error) {
+      if (!(error instanceof InboxCapacityError)) throw error;
+      if (!this.closing) await this.send(message, error.message);
+      console.error(`[${message.route.account}] inbox capacity reached; input not accepted`);
       return;
+    }
+    if (this.closing) return; // Durable pending source survives channel shutdown.
+    return this.dispatchReceived(message, inboxId);
+  }
+  private async dispatchReceived(message: Incoming, inboxId?: string): Promise<void> {
+    const group = message.route.platform === 'lark' && message.groupMessage;
+    const mode = group ? this.groupMode(message) : 'mention';
+    const passive = group && !group.mentioned && mode !== 'auto';
+    const handle = async () => {
+      if (this.closing) return;
+      if (inboxId && !this.authorized(message)) {
+        this.store.finishIncoming(inboxId, true, '发送者已无当前机器人权限，未恢复执行。');
+        return;
+      }
+      if (inboxId && !this.store.startIncoming(inboxId)) return;
+      try {
+        await this.handleMessage(message);
+        if (inboxId)
+          this.store.finishIncoming(
+            inboxId,
+            this.closing,
+            this.closing ? '服务停止，处理结果未确认；请核对原文和会话历史。' : undefined,
+          );
+      } catch (error) {
+        if (inboxId)
+          this.store.finishIncoming(inboxId, true, '处理结果未确认；请核对原文和会话历史。');
+        throw error;
+      }
+    };
     if (
       group &&
       mode !== 'mention' &&
@@ -1087,7 +1134,7 @@ export class Manager {
       (!message.attachments?.length && recognizeSessionControl(message.text)) ||
       (topicOverview && isTopicCoordinator(topicOverview))
     )
-      return this.handleMessage(message);
+      return handle();
     const key = routeKey(message.route);
     const previous = this.receiving.get(key) ?? Promise.resolve();
     const job = previous
@@ -1098,7 +1145,7 @@ export class Manager {
           if (current) await this.active.get(current.id)?.promise;
           if (this.groupMode(message) !== 'auto') return;
         }
-        await this.handleMessage(message);
+        await handle();
       });
     this.receiving.set(key, job);
     try {
@@ -1106,6 +1153,49 @@ export class Manager {
     } finally {
       if (this.receiving.get(key) === job) this.receiving.delete(key);
     }
+  }
+  resumeInbox(): Promise<void> {
+    if (this.closing) return Promise.resolve();
+    if (this.inboxRecovery) {
+      this.inboxAgain = true;
+      return this.inboxRecovery;
+    }
+    this.inboxRecovery = (async () => {
+      for (const item of this.store.inbox()) {
+        if (this.closing) break;
+        if (item.state !== 'pending') continue;
+        const message = item.message;
+        if (!this.authorized(message)) {
+          this.store.finishIncoming(item.id, true, '发送者已无当前机器人权限，未恢复执行。');
+          continue;
+        }
+        if (
+          !this.channels.has(message.route.account) ||
+          ['error', 'starting'].includes(this.channelStates.get(message.route.account)?.state ?? '')
+        )
+          continue;
+        if (
+          !/^\/tab(?:\s|$)/.test(message.text) &&
+          (this.active.size >= this.config.maxConcurrentRuns ||
+            [...this.active.keys()].some(
+              (id) => this.store.get(id)?.routeKey === routeKey(message.route),
+            ))
+        )
+          continue;
+        await this.dispatchReceived(message, item.id).catch(() => {});
+      }
+    })()
+      .catch(() => {
+        console.error('Inbox recovery failed; unresolved source records retained');
+      })
+      .finally(() => {
+        this.inboxRecovery = undefined;
+        if (this.inboxAgain) {
+          this.inboxAgain = false;
+          void this.resumeInbox();
+        }
+      });
+    return this.inboxRecovery;
   }
   private async handleMessage(message: Incoming): Promise<void> {
     if (this.closing) return;
@@ -1759,6 +1849,7 @@ export class Manager {
     this.active.set(session.id, entry);
     entry.promise = this.execute(session, message, controller).finally(() => {
       this.active.delete(session.id);
+      void this.resumeInbox();
       this.controls.refresh(session.id);
       this.tasks.turnFinished(session.id, this.store.get(session.id)?.status === 'idle');
       this.topics.turnFinished(
@@ -1846,6 +1937,12 @@ export class Manager {
     this.store.event(session.id, 'agent_run', JSON.stringify({ ...run, status: 'running' }));
     this.controls.refresh(session.id);
     try {
+      if (message.route.platform === 'dingtalk' && !session.imEntry)
+        delivery = this.send(
+          message,
+          '已收到，正在处理。首次启动可能需要一些时间；可发送 /tab status 查看状态，或 /tab stop 中断。',
+          session.id,
+        );
       const attachments = message.topicUpdateId ? [] : (session.pendingAttachments ?? []);
       const context =
         !session.taskId && message.groupMessage && this.groupMode(message) !== 'mention'
@@ -2086,13 +2183,14 @@ export class Manager {
       const session = sessionId ? this.store.get(sessionId) : undefined;
       const scoped =
         session && virtualSessions(message.route) && sameChat(session.route, message.route);
+      const target = scoped
+        ? { ...message, route: session.route, sessionAnchor: true }
+        : { ...message, sessionAnchor: false };
+      const body = scoped ? `${sessionLabel(session)}\n${text}` : text;
       await deliveryDeadline(
-        channel.send(
-          scoped
-            ? { ...message, route: session.route, sessionAnchor: true }
-            : { ...message, sessionAnchor: false },
-          scoped ? `${sessionLabel(session)}\n${text}` : text,
-        ),
+        channel.platform === 'dingtalk'
+          ? (signal) => channel.send(target, body, signal)
+          : channel.send(target, body),
         Math.min(15_000, this.config.turnTimeoutMs),
         this.routingAbort.signal,
       );
@@ -2192,7 +2290,13 @@ export class Manager {
         session.taskId ? this.store.taskRecord(session.taskId) : undefined,
       );
     try {
-      await channel.sendManagement(target, view);
+      if (channel.platform === 'dingtalk')
+        await deliveryDeadline(
+          (signal) => channel.sendManagement!(target, view, signal),
+          Math.min(15_000, this.config.turnTimeoutMs),
+          this.routingAbort.signal,
+        );
+      else await channel.sendManagement(target, view);
     } catch (error) {
       const diagnostic =
         error instanceof ManagementDeliveryError
@@ -2206,6 +2310,14 @@ export class Manager {
         ...diagnostic,
       };
       if (sessionId) this.store.event(sessionId, 'delivery_error', JSON.stringify(record));
+      // DingTalk already falls back on definite Markdown rejection internally.
+      // Retrying an unconfirmed request here can duplicate a delivered message.
+      if (message.route.platform === 'dingtalk') {
+        console.error(
+          `[${message.route.account}] management delivery unconfirmed; diagnostic ${record.id}`,
+        );
+        return;
+      }
       const prefix = `管理卡片未能确认送达，以下为文字入口。${action === 'compact' && deliveryStage === 'confirmation' ? '本次只查看确认面板，尚未发起新的压缩。' : ''}\n诊断编号：${record.id}\n`;
       try {
         if (channel.sendManagementFallback)
@@ -3282,6 +3394,49 @@ export class Manager {
     if (adminOnlyAction(action) && !this.canAdmin(message)) return this.adminDenied(message);
     const reply = (text: string, buttons?: ManagementButton[]) =>
       this.sendManagement(message, text, current?.id, action, buttons);
+    if (action === 'inbox') {
+      const rows = this.store
+        .inbox()
+        .filter(
+          (item) =>
+            item.message.id !== message.id &&
+            (['platform', 'account', 'conversation', 'sender'] as const).every(
+              (key) => item.message.route[key] === message.route[key],
+            ),
+        );
+      const dismiss = args[0] === 'dismiss';
+      const requestedId = dismiss ? args[1] : args[0];
+      const match = rows.filter((item) => item.id.startsWith(requestedId ?? ''));
+      if (dismiss) {
+        if (!requestedId || match.length !== 1)
+          return reply('请使用 /tab inbox dismiss <唯一短ID> 确认清理一条中断记录。');
+        return reply(
+          this.store.dismissIncoming(match[0]!.id)
+            ? '已清理该中断收件记录；不会重新执行，原消息去重回执仍保留。'
+            : '只能清理中断记录；尚未处理或正在处理的消息不能删除。',
+        );
+      }
+      if (args[0]) {
+        if (match.length !== 1)
+          return reply('未找到唯一的本聊天收件记录，请使用 /tab inbox 查看短ID。');
+        const item = match[0]!;
+        return reply(
+          `消息 ${item.id.slice(0, 8)} · ${item.state}\n${item.detail ?? '尚未开始处理，将在可用时恢复。'}\n\n原文：\n${item.message.text}\n\n中断记录不会自动重跑；请先核对 /tab history，再按需重新发送原文。`,
+        );
+      }
+      return reply(
+        rows.length
+          ? `本聊天共 ${rows.length} 条未处理或中断记录，显示最近 20 条。核对后可用 /tab inbox dismiss <短ID> 清理中断记录。\n\n` +
+              rows
+                .slice(-20)
+                .map(
+                  (item) =>
+                    `${item.id.slice(0, 8)} · ${item.state} · ${item.message.text.replace(/\s+/g, ' ').slice(0, 80)}\n/tab inbox ${item.id.slice(0, 8)}`,
+                )
+                .join('\n\n')
+          : '没有未处理或中断的收件记录。',
+      );
+    }
     if (action === 'topics' || action === 'topic-report') {
       if (current?.taskId) {
         if (action === 'topics') return reply(this.tasks.describeBranch(current.id));
@@ -4263,6 +4418,7 @@ export class Manager {
     for (const active of this.active.values()) active.controller.abort(new Error('服务正在关闭'));
     await this.settings.close();
     await Promise.allSettled([...this.receiving.values()]);
+    await this.inboxRecovery;
     await this.topicRouter?.close?.();
     await this.reports.close();
     await this.idle();

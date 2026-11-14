@@ -67,6 +67,7 @@
 - `/tab close`：关闭会话，停止当前任务，保留历史；显示系统关闭通知，与 Agent 内容区分。
 - `/tab open`：打开同一管理会话，等待新输入，不重跑历史。
 - `/tab last`：重新发送上轮结果，不再次执行。
+- `/tab inbox [短ID]`：查看钉钉尚未处理或中断的收件原文；核对后用 `/tab inbox dismiss <短ID>` 清理中断记录。容量和恢复边界见 [钉钉收件恢复](dingtalk.md#收件恢复与容量)。
 - `/tab detach` 或 `tab-ai native <管理ID>`：交还原生终端。
 - `/tab attach`：先退出原生 CLI，再交回框架，避免两边同时写原生 session。
 
