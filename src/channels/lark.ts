@@ -46,6 +46,36 @@ export class LarkChannel implements Channel {
   private cards = new CardRegistry();
   private managementCards = new ManagementCards();
   private managedSessionMessages = new Set<string>();
+  private receiptJobs = 0;
+  private receiptsStopped = false;
+  private receiptWarningAt = 0;
+  async acknowledgeMessage(message: Incoming): Promise<void> {
+    if (
+      this.receiptsStopped ||
+      this.receiptJobs >= 8 ||
+      message.route.platform !== this.platform ||
+      message.route.account !== this.id ||
+      !/^om_[A-Za-z0-9_-]+$/.test(message.id)
+    )
+      return;
+    this.receiptJobs++;
+    try {
+      const result = await this.client.im.messageReaction.create({
+        path: { message_id: message.id },
+        data: { reaction_type: { emoji_type: 'Get' } },
+      });
+      if (result.code !== 0) throw new Error('Receipt not confirmed');
+    } catch {
+      if (!this.receiptsStopped && Date.now() - this.receiptWarningAt >= 60_000) {
+        this.receiptWarningAt = Date.now();
+        console.error(
+          `[${this.id}] message receipt unavailable; check im:message.reactions:write_only, app publication and connectivity; normal processing continues`,
+        );
+      }
+    } finally {
+      this.receiptJobs--;
+    }
+  }
   onManagementAction(
     handler: ManagementHandler,
     authorize?: (message: Incoming, scope?: ManagementView['scope']) => boolean,
@@ -602,6 +632,7 @@ export class LarkChannel implements Channel {
     if (sent.code !== 0) throw Error('飞书交接文档发送未确认；未自动重试。');
   }
   async stop(): Promise<void> {
+    this.receiptsStopped = true;
     this.approvalDetails.stop();
     this.connecting?.abort();
     this.socket.close();

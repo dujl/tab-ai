@@ -1131,6 +1131,10 @@ export class Manager {
     // Passive messages only become reference material. They never start a session,
     // run a management command, invoke the classifier, download files or reply.
     if ((passive && !message.requiresExistingSession) || !this.authorized(message)) return;
+    if (!message.requiresExistingSession || this.store.current(message.route))
+      void Promise.resolve()
+        .then(() => this.channels.get(message.route.account)?.acknowledgeMessage?.(message))
+        .catch(() => console.error(`[${message.route.account}] message receipt failed`));
     const topicOverview =
       !message.attachments?.length &&
       isTopicOverviewQuery(message.text) &&

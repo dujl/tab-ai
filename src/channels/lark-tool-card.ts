@@ -1,6 +1,7 @@
 import { agentNames, type ToolRunView } from '../core/types.js';
 import { toolStatus } from '../core/tool-progress.js';
 import { toolRunAppearance } from './lark-card-status.js';
+import { projectLink } from './lark-menu-layout.js';
 const escape = (s: string) => s.replace(/[&<>*~\[\]()#_`]/g, (c) => `&#${c.charCodeAt(0)};`);
 const short = (s: string, n: number) =>
   Array.from(s).slice(0, n).join('') + (Array.from(s).length > n ? '…' : '');
@@ -63,6 +64,7 @@ export function larkToolCard(view: ToolRunView) {
           text_size: 'notation',
           content: `tab-ai 执行记录 · 展示最近 ${tools.length}/${view.total} 项，详情可能截断；/tab tools 按序号查看。`,
         },
+        projectLink(),
       ],
     },
   });

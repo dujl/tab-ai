@@ -19,6 +19,7 @@ export const LARK_SCOPES = [
   'im:message.group_msg',
   'im:message:readonly',
   'im:message:send_as_bot',
+  'im:message.reactions:write_only',
 ];
 export const GUIDES = {
   wechat: {

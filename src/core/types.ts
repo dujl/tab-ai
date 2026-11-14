@@ -366,6 +366,8 @@ export interface Channel {
   id: string;
   platform: Platform;
   start(onMessage: (message: Incoming) => Promise<void>): Promise<void>;
+  // Optional transport receipt; does not imply model submission or task completion.
+  acknowledgeMessage?(message: Incoming): Promise<void>;
   send(message: Incoming, text: string, signal?: AbortSignal): Promise<void>;
   sendDocument?(
     message: Incoming,

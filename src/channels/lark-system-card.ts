@@ -1,5 +1,6 @@
 import { type Session } from '../core/types.js';
 import { sessionName } from '../core/session-title.js';
+import { projectLink } from './lark-menu-layout.js';
 const escape = (text: string) => text.replace(/[&<>*~\[\]()#_`]/g, (c) => `&#${c.charCodeAt(0)};`);
 export function larkClosedCard(session: Session, notice: { at: number; recovery: string }) {
   return {
@@ -38,6 +39,7 @@ export function larkClosedCard(session: Session, notice: { at: number; recovery:
           text_size: 'notation',
           content: `<font color='grey'>${escape(new Date(notice.at).toLocaleString('zh-CN', { hour12: false }))} · ${session.id.slice(0, 8)}</font>`,
         },
+        projectLink(),
       ],
     },
   };
