@@ -39,6 +39,7 @@ const titles: Record<string, string> = {
   history: '最近对话',
   tools: '工具记录',
   pending: '待处理请求',
+  inbox: '钉钉收件记录',
   inspect: '请求详情',
   close: '会话已关闭',
   open: '会话已打开',

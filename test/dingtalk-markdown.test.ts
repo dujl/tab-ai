@@ -45,6 +45,29 @@ test('DingTalk menus use compact native Markdown sections with literal values an
   assert.match(status, /Token 消耗/);
   assert.match(status, /native-test/);
 });
+test('DingTalk keeps complete bold, links and fenced blocks together and degrades oversized structures without losing source', () => {
+  for (const block of [
+    '**' + '汉'.repeat(30) + '**',
+    '[link](https://example.test/' + 'a'.repeat(80) + ')',
+    '```ts\n' + 'let x = 1;\n'.repeat(8) + '```',
+  ]) {
+    const source = '## 标题\n\n' + block + '\n\n结束';
+    const parts = dingMarkdownParts(source, 128);
+    assert.equal(parts.map((p) => p.plain).join(''), source);
+    assert.ok(parts.every((p) => Buffer.byteLength(p.markdown) <= 128));
+    if (Buffer.byteLength(block) > 128) assert.ok(parts.some((p) => p.format === 'text'));
+    for (const part of parts.filter((p) => p.format === 'markdown')) {
+      assert.equal((part.plain.match(/\*\*/g) ?? []).length % 2, 0);
+      assert.equal((part.plain.match(/```/g) ?? []).length % 2, 0);
+      if (part.plain.includes('[link]')) assert.ok(part.plain.includes(block));
+    }
+  }
+  for (const source of ['**' + '🙂'.repeat(200) + '**', '```\n未闭合代码']) {
+    const parts = dingMarkdownParts(source, 128);
+    assert.equal(parts.map((p) => p.plain).join(''), source);
+    assert.ok(parts.every((p) => p.format === 'text'));
+  }
+});
 
 test('DingTalk budgets escaped Markdown by bytes and retains exact source for per-part fallback', () => {
   const source = '&<>🙂中文\n'.repeat(700);

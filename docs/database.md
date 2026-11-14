@@ -10,6 +10,7 @@
 | `bindings`              | Route → 当前 Session；归档节点不因路由相同覆盖当前选择                        |
 | `events`                | 递增 ID、Session、类型、正文、毫秒时间；公开输入/输出、工具、审批、报告索引等 |
 | `receipts`              | 平台消息去重回执                                                              |
+| `message_inbox`         | 钉钉原文与接收状态；恢复尚未处理的消息，保留结果未知记录供核对                |
 | `session_cards`         | 飞书持久会话卡片身份、状态和版本                                              |
 | `group_messages`        | 已接收群参考，按聊天与权限限定使用                                            |
 | `group_context_cursors` | Session 已消费群参考的位置                                                    |

@@ -127,7 +127,9 @@ export function normalizeDingTalk(raw: unknown, account: string): Incoming | und
   if (data.conversationType === '2' && data.isInAtList !== true) return;
   return {
     id: data.msgId,
-    text: data.text.content,
+    text: /^\s+\/tab(?:\s|$)/.test(data.text.content)
+      ? data.text.content.trimStart()
+      : data.text.content,
     direct: data.conversationType === '1',
     route: {
       platform: 'dingtalk',

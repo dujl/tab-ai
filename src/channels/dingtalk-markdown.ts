@@ -47,39 +47,75 @@ export function dingManagementMarkdown(view: ManagementView): string {
 }
 
 export function hasDingMarkdown(text: string): boolean {
-  return /(^|\n)\s{0,3}(?:#{1,6}\s|[-*]\s|\d+\.\s)|\*\*[^*\n]+\*\*|\[[^\]\n]+\]\(https?:\/\//.test(
+  return /(^|\n)\s{0,3}(?:#{1,6}\s|[-*]\s|\d+\.\s|`{3,}|~{3,})|\*\*[^*\n]+\*\*|\[[^\]\n]+\]\(https?:\/\//.test(
     text,
   );
 }
 
-// Budget the encoded payload, while retaining source text for a definite
-// Markdown rejection. Splitting never cuts a Unicode code point or entity.
+// Keep paragraphs and fenced blocks intact. An oversized or incomplete block
+// retains its exact source as text rather than emitting broken rich syntax.
 export function dingMarkdownParts(
   text: string,
   maxBytes = 5000,
-): { plain: string; markdown: string }[] {
+): { plain: string; markdown: string; format: 'text' | 'markdown' }[] {
   if (maxBytes < 6) throw new Error('maxBytes must be at least 6');
-  const parts: { plain: string; markdown: string }[] = [];
-  let plain = '',
-    markdown = '',
-    bytes = 0;
-  for (const character of text) {
-    const encoded = escapeHtml(character),
-      size = Buffer.byteLength(encoded);
-    while (bytes + size > maxBytes) {
-      const paragraph = plain.lastIndexOf('\n\n');
-      const line = plain.lastIndexOf('\n');
-      const cut = paragraph >= 0 ? paragraph + 2 : line >= 0 ? line + 1 : plain.length;
-      const head = plain.slice(0, cut);
-      parts.push({ plain: head, markdown: escapeHtml(head) });
-      plain = plain.slice(cut);
-      markdown = escapeHtml(plain);
-      bytes = Buffer.byteLength(markdown);
+  const parts: ReturnType<typeof dingMarkdownParts> = [];
+  let pending = '';
+  const push = (plain: string, format: 'text' | 'markdown') => {
+    if (plain) parts.push({ plain, markdown: escapeHtml(plain), format });
+  };
+  const flush = () => {
+    push(pending, 'markdown');
+    pending = '';
+  };
+  const block = (source: string, complete = true) => {
+    if (complete && Buffer.byteLength(escapeHtml(source)) <= maxBytes) {
+      if (Buffer.byteLength(escapeHtml(pending + source)) > maxBytes) flush();
+      pending += source;
+      return;
     }
-    plain += character;
-    markdown += encoded;
-    bytes += size;
+    flush();
+    let plain = '',
+      bytes = 0;
+    for (const character of source) {
+      const size = Buffer.byteLength(escapeHtml(character));
+      if (bytes + size > maxBytes) {
+        push(plain, 'text');
+        plain = '';
+        bytes = 0;
+      }
+      plain += character;
+      bytes += size;
+    }
+    push(plain, 'text');
+  };
+  let source = '',
+    fence: string | undefined;
+  for (const line of text.match(/[^\n]*\n|[^\n]+$/g) ?? []) {
+    const marker = /^ {0,3}(`{3,}|~{3,})(.*?)(?:\r?\n)?$/.exec(line);
+    if (!fence && marker && !(marker[1]![0] === '`' && marker[2]!.includes('`'))) {
+      if (source) block(source);
+      source = line;
+      fence = marker[1]!;
+    } else {
+      source += line;
+      if (
+        fence &&
+        marker &&
+        marker[1]![0] === fence[0] &&
+        marker[1]!.length >= fence.length &&
+        !marker[2]!.trim()
+      ) {
+        block(source);
+        source = '';
+        fence = undefined;
+      } else if (!fence && !line.trim()) {
+        block(source);
+        source = '';
+      }
+    }
   }
-  if (plain) parts.push({ plain, markdown });
+  if (source) block(source, !fence);
+  flush();
   return parts;
 }

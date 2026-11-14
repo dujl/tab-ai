@@ -8,6 +8,10 @@ import { normalizeDingTalk } from '../src/channels/normalize.js';
 import { managementView } from '../src/core/management-view.js';
 import type { Incoming } from '../src/core/types.js';
 import { fixture, until } from './helpers.js';
+import { deliveryDeadline } from '../src/core/delivery-deadline.js';
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 function raw(overrides: Record<string, unknown> = {}) {
   return {
@@ -24,7 +28,7 @@ function raw(overrides: Record<string, unknown> = {}) {
     ...overrides,
   };
 }
-function transport(t: TestContext, id = 'ding') {
+function transport(t: TestContext, id = 'ding', dataDir?: string) {
   const channel = new DingTalkChannel(
     {
       id,
@@ -34,6 +38,7 @@ function transport(t: TestContext, id = 'ding') {
       clientSecretEnv: 'SECRET',
     },
     (key) => (key === 'ID' ? 'fixture-client' : 'fixture-secret'),
+    dataDir,
   );
   const handlers = new Map<string, (event: any) => void>(),
     responses: { id: string; result: unknown }[] = [],
@@ -87,6 +92,159 @@ function mockApi(
   });
   return requests;
 }
+
+test('DingTalk trims only leading command whitespace and bypasses a degraded natural language router', async (t) => {
+  const f = fixture({
+    async classify() {
+      assert.fail('slash command reached classifier');
+    },
+  });
+  t.after(() => f.cleanup());
+  f.config.channels = [
+    {
+      id: f.channel.id,
+      type: 'dingtalk',
+      allowedUsers: ['alice'],
+      clientIdEnv: 'ID',
+      clientSecretEnv: 'SECRET',
+    },
+  ];
+  const command = normalizeDingTalk(raw({ text: { content: ' \n /tab status  ' } }), f.channel.id)!;
+  assert.equal(command.text, '/tab status  ');
+  assert.equal(
+    normalizeDingTalk(raw({ text: { content: '  ordinary prose  ' } }), 'ding')!.text,
+    '  ordinary prose  ',
+  );
+  await f.manager.receive(command);
+  assert.equal(f.agent.inputs.length, 0);
+  assert.ok(f.channel.sent.length);
+});
+
+test('DingTalk cancellation stops later webhook chunks even if the issued request settles late', async (t) => {
+  const f = transport(t);
+  let resolve!: (response: Response) => void;
+  let issuedSignal: AbortSignal | undefined;
+  let posts = 0;
+  t.mock.method(globalThis, 'fetch', async (_url: unknown, options: RequestInit) => {
+    posts++;
+    issuedSignal = options.signal!;
+    return new Promise<Response>((finish) => {
+      resolve = finish;
+    });
+  });
+  await f.start();
+  f.emit();
+  const delivery = deliveryDeadline(
+    (signal) => f.channel.send(f.messages[0]!, 'x'.repeat(8000), signal),
+    5,
+    new AbortController().signal,
+  );
+  await assert.rejects(delivery, /超时/);
+  assert.equal(issuedSignal?.aborted, true);
+  resolve(Response.json({ errcode: 0 }));
+  await setImmediate();
+  assert.equal(posts, 1);
+});
+
+test('Manager does not text-fallback an unconfirmed DingTalk management delivery', async (t) => {
+  const f = fixture();
+  t.after(() => f.cleanup());
+  f.config.channels = [
+    {
+      id: f.channel.id,
+      type: 'dingtalk',
+      allowedUsers: ['alice'],
+      clientIdEnv: 'ID',
+      clientSecretEnv: 'SECRET',
+    },
+  ];
+  Object.assign(f.channel, {
+    platform: 'dingtalk',
+    async sendManagement() {
+      throw new Error('unconfirmed');
+    },
+  });
+  t.mock.method(console, 'error', () => {});
+  const message = normalizeDingTalk(raw({ text: { content: '/tab status' } }), f.channel.id)!;
+  await f.manager.receive(message);
+  assert.equal(f.channel.sent.length, 0);
+  assert.equal(f.agent.inputs.length, 0);
+});
+
+test('DingTalk proactive send never starts message POST after token wait was cancelled', async (t) => {
+  const f = transport(t);
+  let token!: (response: Response) => void;
+  let posts = 0;
+  t.mock.method(globalThis, 'fetch', async (url: unknown) => {
+    if (String(url).endsWith('/accessToken'))
+      return new Promise<Response>((resolve) => {
+        token = resolve;
+      });
+    posts++;
+    return Response.json({ processQueryKey: 'ok' });
+  });
+  await f.start();
+  f.emit(raw({ sessionWebhook: undefined }));
+  await assert.rejects(
+    deliveryDeadline(
+      (signal) => f.channel.send(f.messages[0]!, 'x'.repeat(8000), signal),
+      5,
+      new AbortController().signal,
+    ),
+    /超时/,
+  );
+  token(Response.json({ accessToken: 'test-token', expireIn: 7200 }));
+  await setImmediate();
+  assert.equal(posts, 0);
+});
+
+test('DingTalk persists bounded proactive routing without credentials or signed callbacks for restart recovery', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'ding-recipients-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const first = transport(t, 'ding', dir),
+    requests = mockApi(t);
+  await first.start();
+  first.emit();
+  const message = first.messages[0]!;
+  const files = readdirSync(join(dir, 'dingtalk-recipients'));
+  assert.equal(files.length, 1);
+  const saved = readFileSync(join(dir, 'dingtalk-recipients', files[0]!), 'utf8');
+  assert.doesNotMatch(
+    saved,
+    /fixture-secret|fixture-client|sessionWebhook|sendBySession|session=fixture/,
+  );
+  await first.channel.stop();
+  const restarted = transport(t, 'ding', dir);
+  await restarted.start();
+  await restarted.channel.send(message, 'recovered answer');
+  assert.ok(requests.at(-1)!.url.endsWith('/robot/oToMessages/batchSend'));
+});
+
+test('DingTalk multipart Markdown rejection falls back for that part only and oversized syntax uses source text', async (t) => {
+  const f = transport(t);
+  let markdowns = 0;
+  const requests = mockApi(t, (_url, body) =>
+    Response.json({ errcode: body.msgtype === 'markdown' && ++markdowns === 2 ? 400 : 0 }),
+  );
+  await f.start();
+  f.emit();
+  const blocks = [
+    '**first**\n' + 'a'.repeat(2800),
+    '**second**\n' + 'b'.repeat(2800),
+    '**third**\n' + 'c'.repeat(2800),
+  ];
+  await f.channel.send(f.messages[0]!, blocks.join('\n\n'));
+  assert.deepEqual(
+    requests.map((r) => r.body.msgtype),
+    ['markdown', 'markdown', 'text', 'markdown'],
+  );
+  assert.equal(requests.filter((r) => JSON.stringify(r.body).includes('**first**')).length, 1);
+  requests.length = 0;
+  const huge = '**' + '汉'.repeat(2000) + '**';
+  await f.channel.send(f.messages[0]!, huge);
+  assert.ok(requests.every((r) => r.body.msgtype === 'text'));
+  assert.equal(requests.map((r) => r.body.text.content).join(''), huge);
+});
 
 test('DingTalk acknowledges receipt while business handling is still pending', async (t) => {
   const f = transport(t);
@@ -422,7 +580,7 @@ test('DingTalk discards reply capabilities when the channel is stopped', async (
   await f.start();
   f.emit(raw());
   await f.channel.stop();
-  await assert.rejects(f.channel.send(f.messages[0]!, 'late result'), /缺少主动发送目标/);
+  await assert.rejects(f.channel.send(f.messages[0]!, 'late result'), { name: 'AbortError' });
   assert.equal(requests.length, 0);
 });
 

@@ -12,7 +12,7 @@ export function createChannel(
   return config.type === 'lark'
     ? new LarkChannel(config, resolveSecret, dataDir)
     : config.type === 'dingtalk'
-      ? new DingTalkChannel(config, resolveSecret)
+      ? new DingTalkChannel(config, resolveSecret, dataDir)
       : config.type === 'wechat'
         ? new WechatChannel(config, resolveSecret, dataDir)
         : new WecomChannel(config, resolveSecret, dataDir);

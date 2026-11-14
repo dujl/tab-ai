@@ -127,7 +127,7 @@ test('DingTalk registration rejects incomplete or terminal responses without lea
   ] as const) {
     const mock = requests([init, begin, response]);
     await assert.rejects(
-      registerDingTalk(new AbortController().signal, () => {}, mock),
+      registerDingTalk(new AbortController().signal, () => {}, { ...mock, statusGraceMs: 0 }),
       (error) => {
         assert.match(safeSetupError(error), pattern);
         assert.doesNotMatch(safeSetupError(error), /private-secret/);
@@ -184,18 +184,79 @@ test('DingTalk retries only polling reads and sanitizes network errors', async (
     ...Array.from({ length: 3 }, () => new Error('private-secret')),
   ]);
   await assert.rejects(
-    registerDingTalk(new AbortController().signal, () => {}, failed),
+    registerDingTalk(new AbortController().signal, () => {}, { ...failed, statusGraceMs: 0 }),
     (error) => {
       assert.match(safeSetupError(error), /查询钉钉扫码结果失败/);
       assert.doesNotMatch(safeSetupError(error), /private-secret/);
       return true;
     },
   );
-  assert.equal(failed.calls.length, 5);
+  assert.equal(failed.calls.length, 3);
   const failedInit = requests([new Error('private-nonce')]);
   await assert.rejects(
     registerDingTalk(new AbortController().signal, () => {}, failedInit),
     /扫码接入失败/,
   );
   assert.equal(failedInit.calls.length, 1);
+});
+test('DingTalk recovers FAIL, EXPIRED and more than three polling network errors on the same device flow', async () => {
+  const mock = requests([
+    init,
+    begin,
+    { errcode: 0, status: 'FAIL' },
+    ...Array.from({ length: 4 }, () => new Error('private-secret')),
+    { errcode: 0, status: 'EXPIRED' },
+    success,
+  ]);
+  assert.equal(
+    (await registerDingTalk(new AbortController().signal, () => {}, mock)).clientId,
+    'ding-test',
+  );
+  assert.equal(mock.calls.filter((c) => c.url.pathname.endsWith('/init')).length, 1);
+  assert.ok(
+    mock.calls
+      .slice(2)
+      .every((c) => JSON.stringify(c.body) === JSON.stringify({ device_code: begin.device_code })),
+  );
+});
+test('DingTalk WAITING resets the shared transient retry window and local cancellation still wins', async (t) => {
+  let now = 1000;
+  t.mock.method(Date, 'now', () => now);
+  const mock = requests([
+    init,
+    begin,
+    { errcode: 0, status: 'FAIL' },
+    { errcode: 0, status: 'WAITING' },
+    { errcode: 0, status: 'EXPIRED' },
+    success,
+  ]);
+  const fetcher: typeof fetch = async (...args) => {
+    now += 20;
+    return mock.fetch(...args);
+  };
+  assert.equal(
+    (
+      await registerDingTalk(new AbortController().signal, () => {}, {
+        ...mock,
+        fetch: fetcher,
+        statusGraceMs: 30,
+      })
+    ).clientId,
+    'ding-test',
+  );
+  const controller = new AbortController();
+  let polls = 0;
+  const failing: typeof fetch = async (input) => {
+    if (String(input).endsWith('/poll')) {
+      polls++;
+      controller.abort();
+      return Response.json({ errcode: 0, status: 'FAIL' });
+    }
+    return Response.json(String(input).endsWith('/init') ? init : begin);
+  };
+  await assert.rejects(
+    registerDingTalk(controller.signal, () => {}, { fetch: failing, pollMs: 1 }),
+    /已取消/,
+  );
+  assert.equal(polls, 1);
 });

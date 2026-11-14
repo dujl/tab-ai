@@ -84,25 +84,26 @@ export async function registerDingTalk(
     const polling = AbortSignal.any([operation, expiry]);
     const interval = options.pollMs ?? Math.min(30, Math.max(3, begin.interval ?? 3)) * 1000;
     onQr(dingtalkQrUrl(begin.verification_uri_complete), Math.ceil(expiresMs / 1000));
-    let failures = 0;
-    let unknownSince: number | undefined;
+    let retrySince: number | undefined;
+    const retry = (message: string) => {
+      retrySince ??= Date.now();
+      if (Date.now() - retrySince >= (options.statusGraceMs ?? 120_000))
+        throw new DingTalkRegistrationError(message);
+    };
     while (true) {
       await delay(interval, undefined, { signal: polling });
       polling.throwIfAborted();
       let raw: Awaited<ReturnType<typeof post>>;
       try {
         raw = await post('poll', { device_code: begin.device_code });
-        failures = 0;
       } catch {
         polling.throwIfAborted();
-        if (++failures >= 3)
-          throw new DingTalkRegistrationError('查询钉钉扫码结果失败，请检查网络后重试。');
+        retry('查询钉钉扫码结果失败，请检查网络后重试。');
         continue;
       }
-      const result = z.object({ status: z.string() }).parse(raw);
-      const status = result.status.trim().toUpperCase();
+      const status = typeof raw.status === 'string' ? raw.status.trim().toUpperCase() : '';
       if (status === 'WAITING') {
-        unknownSince = undefined;
+        retrySince = undefined;
         continue;
       }
       if (status === 'SUCCESS') {
@@ -120,15 +121,15 @@ export async function registerDingTalk(
           clientSecret: credentials.data.client_secret,
         };
       }
-      if (status === 'EXPIRED')
-        throw new DingTalkRegistrationError('钉钉授权链接已过期，请重新扫码。');
-      if (status === 'FAIL')
-        throw new DingTalkRegistrationError('钉钉授权未完成或已取消，请重新扫码。');
       // The official connector tolerates transitional statuses for two minutes.
       // Keep polling this same device flow; never restart remote registration.
-      unknownSince ??= Date.now();
-      if (Date.now() - unknownSince >= (options.statusGraceMs ?? 120_000))
-        throw new DingTalkRegistrationError('钉钉扫码状态异常，请重新扫码。');
+      retry(
+        status === 'EXPIRED'
+          ? '钉钉授权链接已过期，请重新扫码。'
+          : status === 'FAIL'
+            ? '钉钉授权未完成或已取消，请重新扫码。'
+            : '钉钉扫码状态异常，请重新扫码。',
+      );
     }
   } catch (error) {
     if (signal.aborted) throw new DingTalkRegistrationError('钉钉扫码已取消。');
