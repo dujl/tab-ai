@@ -20,7 +20,7 @@ test('configuration resolves from the user directory and data defaults beside it
   const dir = mkdtempSync(join(realpathSync(tmpdir()), 'tab-ai-brand-'));
   try {
     const raw = { workspaces: { default: dir }, defaultWorkspace: 'default' };
-    // Omitted dataDir stays inside the configuration directory, never beside a legacy one.
+    // An omitted dataDir resolves relative to the configuration directory.
     writeFileSync(join(dir, 'config.json'), JSON.stringify(raw));
     assert.equal(loadConfig(join(dir, 'config.json')).dataDir, join(dir, 'data'));
     // Absolute, ~ and file-relative data paths all resolve.

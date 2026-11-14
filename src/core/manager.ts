@@ -926,7 +926,7 @@ export class Manager {
   }
   refreshSessionCards(): void {
     for (const session of this.store.list()) {
-      // Do not backfill cards for archived legacy main-chat records on upgrade.
+      // Archived main-chat records receive updates only when they already have a card.
       if (session.route.thread || session.status !== 'closed' || this.store.card(session.id))
         this.controls.refresh(session.id);
     }

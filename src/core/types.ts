@@ -77,7 +77,7 @@ export interface Session {
   // Immediate logical parent; platform threads themselves may remain flat.
   parentSessionId?: string;
   creationKey?: string;
-  // Legacy relationship, read as parentSessionId when the latter is absent.
+  // Group-topic parent used when parentSessionId is absent.
   topicParentId?: string;
   topicObjective?: string;
   topicCriteria?: string;

@@ -1,6 +1,6 @@
 # 任务树投影与导航
 
-产品界面只有一个任务目录；数据模型和布局原则见 [统一任务概念](unified-tasks-and-structure.md)，操作见 [Dashboard](dashboard.md)。本页描述已经实现的投影，不维护另一套界面方案。
+产品界面只有一个任务目录；数据模型和布局原则见 [统一任务概念](unified-tasks-and-structure.md)，操作见 [Dashboard](dashboard.md)。本页说明任务投影、节点身份及导航行为。
 
 ## 节点身份
 

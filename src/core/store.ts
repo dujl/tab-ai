@@ -128,8 +128,7 @@ export class Store {
     this.reports = new ReportStore(this.db);
     this.unifiedTasks = hasUnifiedTaskModel(this.db);
     for (const session of this.list()) {
-      // Before on-request became the Codex default, selecting native removed
-      // the field. Preserve that explicit opt-out using the existing audit.
+      // Recover an explicit native-policy choice from its audit event when the field is absent.
       if (session.agent === 'codex' && session.approvalPolicy === undefined) {
         const choice = this.db
           .prepare(
@@ -143,8 +142,7 @@ export class Store {
             .run(JSON.stringify(session), session.id);
         }
       }
-      // Topic coordination is inherent to group sessions. Retire legacy on/off
-      // preferences without changing transcript IDs, bindings or recency order.
+      // Coordination is intrinsic; discard stored topicControl preferences without changing session identity.
       if ('topicControl' in session) {
         delete (session as Session & { topicControl?: boolean }).topicControl;
         this.db
@@ -200,8 +198,7 @@ export class Store {
             this.event(session.id, 'tool', JSON.stringify({ ...tool, status: 'interrupted' }));
       }
     }
-    // Old reports had no final/progress distinction; never replay an unverified
-    // legacy stage report as a newly completed topic after upgrading.
+    // Untyped reports cannot establish completion or trigger automatic delivery.
     for (const job of this.topicUpdates().filter((j) => j.state === 'pending' && !j.reason)) {
       job.state = 'cancelled';
       this.saveTopicUpdate(job);

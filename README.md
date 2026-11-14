@@ -70,7 +70,7 @@ tab-ai init --local
 tab-ai serve
 ```
 
-另开终端执行 `tab-ai dashboard` 获取网页入口。包包含 CLI、网页、配置模板及使用文档，依赖仍通过 npm 安装；这不是已经发布到公共 registry 的声明。打包、个人安装前缀、独立配置与升级步骤见 [安装指南](docs/installation.md)。
+另开终端执行 `tab-ai dashboard` 获取网页入口。包包含 CLI、网页、配置模板及使用文档，依赖仍通过 npm 安装。打包、个人安装前缀、独立配置与升级步骤见 [安装指南](docs/installation.md)。
 
 ### 第一个任务与接力
 
@@ -130,7 +130,7 @@ npm run verify
 
 verify 一次运行格式、文档、类型、完整测试和构建。`npm test` 限制最多四个测试文件并行，`npm run test:coverage` 提供覆盖率入口。GitHub CI 配置检查 Linux/macOS、Node 22.16.0/24；真实租户联调另行验收。贡献步骤见 [开发指南](CONTRIBUTING.md)，命令、领域和边界见 [测试指南](docs/testing.md)。
 
-构建输出从源码重新生成；格式检查和未使用符号检查防止无用代码积累。文档检查验证仓库内链接。单元/协议测试使用隔离数据与替身，不把通过测试等同于所有真实 IM 租户已验收。验证范围见 [验收](docs/acceptance.md)，当前需求覆盖与限制见 [实现评审](docs/implementation-review.md)。
+构建输出从源码重新生成；格式检查和未使用符号检查防止无用代码积累。文档检查验证仓库内链接。单元/协议测试使用隔离数据与替身，不把通过测试等同于所有真实 IM 租户已验收。验证范围见 [验收](docs/acceptance.md)，功能与限制见 [能力说明](docs/capabilities.md)。
 
 ## 文档与支持
 

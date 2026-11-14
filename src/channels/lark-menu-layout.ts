@@ -106,8 +106,7 @@ export function toCard2(elements: CardElement[]): CardElement[] {
   });
 }
 
-// Form buttons identify their server-issued action by component name. No legacy
-// value/behaviors fields are mixed into a Card 2.0 form submission button.
+// Resolve Card 2.0 form actions from server-issued component names.
 export function normalizeCardCallback(raw: unknown): any {
   const data = raw as any;
   if (data?.action?.value?.kind || typeof data?.action?.name !== 'string') return raw;

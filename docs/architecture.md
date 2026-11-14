@@ -1,6 +1,6 @@
 # 当前架构
 
-运行时为一个本机 Node.js 服务，连接多个 Bot 和原生 Agent 运行时。核心原则见 [设计原则](design-principles.md)，存储见 [数据库](database.md)，需求覆盖见 [实现评审](implementation-review.md)。
+运行时为一个本机 Node.js 服务，连接多个 Bot 和原生 Agent 运行时。核心原则见 [设计原则](design-principles.md)，存储见 [数据库](database.md)，功能边界见 [能力说明](capabilities.md)。
 
 ## 组件
 

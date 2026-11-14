@@ -29,6 +29,14 @@ Task.parentId 是验收层级，Session.parentSessionId 是对话关联；根任
 
 Task 目标完成、Session 空闲/关闭、报告就绪、审批允许是不同状态。报告记录提供方或执行 Agent 的依据，不能代替实际验收。
 
+## 任务记录登记
+
+尚未登记 TaskRecord 的 Session 可直接投影到统一任务目录。首次调用任务工具或新增编排子任务时，框架核对当前绑定、父子关系和授权范围，原地登记关联分支。sessionId、nativeId、目录、用户指令、公开历史及 `session:<id>` 导航键保持不变；登记不会复制对话、执行历史要求或生成初始工作队列。已归档且被替换绑定的节点不参与执行登记。
+
+`tab-ai migrate-tasks` 预览全部 Session 的登记计划，停服备份后使用 `--apply` 批量写入，包括归档节点。回填节点为只交互记录，不自动加入编排调度或父级验收阻塞。迁移持有实例锁，备份后在写事务内核对快照，外部变化会使整批操作中止。
+
+话题报告保存在 Session 和事件中。已明确确认的最终成果映射为任务结果，阶段小结映射为进度，登记时取消待回传队列。未登记节点由 Topics 管理，登记后的编排节点使用任务调度与直接父级验收。原生线程保持不变。
+
 ## 事务与恢复
 
 Session 写入及对应任务同步、任务结果/队列变化使用同一 SQLite 事务；嵌套操作采用 savepoint。单节点变动同步相关祖先与必要子树，避免每次扫描整个图。迁移持有与服务相同的目录锁，先备份，再在写事务内核对快照，没有变化才整体提交。
@@ -41,4 +49,4 @@ Session 写入及对应任务同步、任务结果/队列变化使用同一 SQLi
 
 `events.type=usage` 保存归一化 JSON、原生会话 ID 和事件时间，作为历史记录；`sessions.data.tokenUsage` 保存当前原生会话的最新快照（nativeId、at、value）。同一次原生累计快照按覆盖处理，不相加；缓存读取包含在输入中、reasoning 包含在输出中，避免重复统计。不同 Agent 的累计范围通过 totalScope 区分；缺失不当作零。
 
-`events.type=compaction` 可附本次操作 tokens.nativeId/before/after；`sessions.data.lastCompactionTokens` 保存最近已确认压缩的对比，`contextUsageInvalidated` 标识压缩后或中止后旧占用已失效。读取时校验当前 Agent/nativeId；重置不继承这些快照。使用现有 JSON 存储，无需重建表或迁移历史会话；旧 usage 事件没有可靠原生 ID 时不自动推定为当前统计；Codex 可按 nativeId 只读补查原生历史，作为展示覆盖层，不回填会话或改变更新时间，确实缺失时才等待新上报。
+`events.type=compaction` 可附本次操作 tokens.nativeId/before/after；`sessions.data.lastCompactionTokens` 保存最近已确认压缩的对比，`contextUsageInvalidated` 标识压缩后或中止后旧占用已失效。读取时校验当前 Agent/nativeId；重置不继承这些快照。统计使用 JSON 字段保存；没有可靠原生 ID 的 usage 事件不能作为当前样本；Codex 可按 nativeId 只读补查原生历史，作为展示覆盖层，不回填会话或改变更新时间，确实缺失时才等待新上报。
