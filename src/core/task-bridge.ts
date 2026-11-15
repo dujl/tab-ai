@@ -3,6 +3,7 @@ import { childTaskSchema, taskResultSchema } from './task-model.js';
 import type { Tasks } from './tasks.js';
 import { topicReportSchema } from './topic-control.js';
 import { capabilityBridge } from './capability-bridge.js';
+import { reportDraftSchema } from './report-model.js';
 
 export async function taskBridge(
   tasks: Tasks,
@@ -52,13 +53,17 @@ export async function taskBridge(
       mcp.registerTool(
         'task_progress',
         {
-          description: '保存阶段进展，不结项、不唤醒父任务。整个目标完成才使用 task_report。',
-          inputSchema: { summary: z.string().min(1).max(12000) },
+          description:
+            '主动提交阶段总结及有依据的经验，父任务下一轮可见；不结项、不自动唤醒父任务。整个目标完成才使用 task_report。',
+          inputSchema: {
+            summary: z.string().min(1).max(12000),
+            lessons: reportDraftSchema.shape.lessons.optional(),
+          },
         },
         (input) =>
           call(() => {
             ready();
-            return tasks.progress(sessionId, input.summary);
+            return tasks.progress(sessionId, input.summary, false, input.lessons);
           }),
       );
       mcp.registerTool(

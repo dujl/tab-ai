@@ -3,6 +3,7 @@
   "port": 4317,
   "defaultAgent": "codex",
   "defaultInstructions": "",
+  "handoffInlineLimit": 50,
   "defaultWorkspace": "default",
   "workspaces": { "default": "." },
   "agents": {

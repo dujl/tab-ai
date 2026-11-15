@@ -7,6 +7,9 @@ import {
   usageInformation,
 } from './token-usage.js';
 import { SessionReports, type ReportWriter } from './session-reports.js';
+import { reportNotification, reportNotificationStatus } from './report-notification.js';
+import { reportPresentation } from './report-document.js';
+import type { SessionReport, ReportNotification } from './report-model.js';
 import { needsExplicitManagement, fallbackDecision } from './routing-fallback.js';
 import { approvalModes, approvalPolicyContext, selectedApprovalPolicy } from './approval-policy.js';
 import { agentPlanSchema, agentPlansText, priorAgentPlan } from './agent-plans.js';
@@ -220,6 +223,8 @@ export class Manager {
     this.tasks = new Tasks(store, {
       authorized: (message) => this.authorized(message),
       readReport: (id, reportId) => this.reports.readForTask(id, reportId),
+      progress: (id, progress, eventId) =>
+        this.reports.recordSummary(id, progress, `task-progress:${id}:${eventId}`, eventId),
       experiences: (id, q) => {
         const s = this.store.get(id);
         if (!s) throw Error('会话不存在');
@@ -250,10 +255,15 @@ export class Manager {
         active: (id) => this.active.has(id),
         capacity: () => !this.closing && this.active.size < this.config.maxConcurrentRuns,
         refresh: (id) => this.controls?.refresh(id),
+        inlineLimit: () => this.config.handoffInlineLimit ?? 50,
+        notify: (report, recipient, role, signal) =>
+          this.sendReportNotification(report, recipient, role, signal),
       },
       reportWriter,
     );
     this.topics = new Topics(store, {
+      summary: (source, result, key, eventId) =>
+        this.reports.recordSummary(source.id, result, key, eventId, result.kind === 'final'),
       ensureParent: (child) => {
         const route = { ...child.route, thread: '' },
           existing = this.store.current(route);
@@ -2105,7 +2115,12 @@ export class Manager {
                 issues: topicDraft.issues,
               });
             else
-              this.tasks.progress(session.id, topicDraft.summary, !!message.topicReportRequested);
+              this.tasks.progress(
+                session.id,
+                topicDraft.summary,
+                !!message.topicReportRequested,
+                topicDraft.lessons,
+              );
           } else this.topics.publish(session, topicDraft, !!message.topicReportRequested);
         } catch {
           this.store.event(
@@ -2204,6 +2219,58 @@ export class Manager {
         );
       console.error(`[${message.route.account}] message delivery failed; use /tab last to recover`);
     }
+  }
+  private async sendReportNotification(
+    report: SessionReport,
+    recipient: Session,
+    role: ReportNotification['role'],
+    signal: AbortSignal,
+  ): Promise<boolean> {
+    signal.throwIfAborted();
+    const source = this.store.get(report.sessionId),
+      message: Incoming = {
+        id: randomUUID(),
+        route: recipient.route,
+        text: '',
+        sessionAnchor: !!virtualSessions(recipient.route),
+      },
+      channel = this.channels.get(recipient.route.account);
+    if (!source || !channel || !this.authorized(message) || recipient.imEntry) return false;
+    const text = reportNotification(report, source, role, this.config.handoffInlineLimit ?? 50),
+      view = managementView(
+        'report-ready',
+        text,
+        recipient,
+        [
+          { label: '查看交接文档', command: `/tab report ${report.id} document` },
+          { label: '查看可复用经验', command: '/tab experience' },
+        ],
+        false,
+      );
+    view.title =
+      report.trigger === 'progress'
+        ? '子任务阶段总结'
+        : role === 'parent'
+          ? '子任务交接摘要'
+          : '结束报告已生成';
+    view.tone = report.outcome === 'completed' ? 'green' : 'orange';
+    delete view.information;
+    const presentation = reportPresentation(report, source, this.config.handoffInlineLimit ?? 50);
+    if (presentation.document && channel.sendDocument) {
+      await deliveryDeadline(
+        channel.sendDocument(message, this.reports.document(recipient.id, report.id), signal),
+        Math.min(15_000, this.config.turnTimeoutMs),
+        signal,
+      );
+    }
+    await deliveryDeadline(
+      channel.sendManagement
+        ? channel.sendManagement(message, view)
+        : channel.send(message, managementText(view)),
+      Math.min(15_000, this.config.turnTimeoutMs),
+      signal,
+    );
+    return true;
   }
   private async sendManagement(
     message: Incoming,
@@ -4375,14 +4442,32 @@ export class Manager {
       return reply('已提交回答。');
     }
     if (action === 'report') {
+      if (args.length === 2 && args[1] === 'document') {
+        const document = this.reports.document(current.id, args[0]!),
+          channel = this.channels.get(message.route.account);
+        if (!channel?.sendDocument)
+          return reply(
+            `当前通道尚未接入文档附件发送。请在 Dashboard 的本会话历史中查看、下载交接文档。\n报告 ID：${args[0]}`,
+          );
+        await deliveryDeadline(
+          channel.sendDocument(message, document, this.routingAbort.signal),
+          Math.min(15_000, this.config.turnTimeoutMs),
+          this.routingAbort.signal,
+        );
+        return reply(`交接文档已发送：${document.filename}`);
+      }
+      if (args.length > 1) throw Error('用法：/tab report [报告ID|refresh]');
       if (args[0] === 'refresh') this.reports.request(current.id);
-      const reports = this.store.reports.list(current.id, 3);
+      const reports =
+        args[0] && args[0] !== 'refresh'
+          ? [this.reports.readForTask(current.id, args[0])]
+          : this.store.reports.list(current.id, 3);
       return reply(
         reports.length
           ? reports
               .map(
                 (r) =>
-                  `报告 ${r.id} · v${r.version} · ${r.state} · ${r.outcome}\n${r.warning ?? ''}\n${r.body ? JSON.stringify(r.body, null, 2) : '正在整理公开执行记录。'}`,
+                  `报告 ${r.id} · v${r.version} · ${r.state} · ${r.outcome}\n${r.warning ?? ''}\n${r.notifications?.map(reportNotificationStatus).join('\n') ?? ''}\n${r.body ? JSON.stringify(r.body, null, 2) : '正在整理公开执行记录。'}`,
               )
               .join('\n\n')
           : '尚无结束报告；关闭会话后自动整理，或 /tab report refresh 主动生成。',

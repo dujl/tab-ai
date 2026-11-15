@@ -252,7 +252,7 @@ test('non-Manager main summarizes its linked children with objectives and report
     assert.equal(data.closed, 1);
     for (const n of [1, 2, 3]) assert.ok(run.text.includes('负责目标' + n));
     assert.ok(run.text.includes('最终成果一'));
-    assert.ok(!run.text.includes('子话题本地阶段资料'));
+    assert.ok(run.text.includes('子话题本地阶段资料'));
     assert.ok(!run.text.includes('不相关的私密目标'));
     assert.ok(!run.text.includes('不应复制完整子话题讨论'));
     assert.match(agentInstructions(run.session)!, /不要求 Manager 角色/);

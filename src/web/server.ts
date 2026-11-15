@@ -126,6 +126,37 @@ export function createDashboard(manager: Manager, token: string, setup?: SetupSe
           return json(response, 200, await setup.cancel(setupMatch[1]!));
         return json(response, 404, { error: 'Not found' });
       }
+      const reportNoticeMatch =
+        /^\/api\/sessions\/([0-9a-f-]{36})\/reports\/([0-9a-f-]{36})\/notifications$/.exec(path);
+      if (reportNoticeMatch && request.method === 'POST') {
+        z.object({})
+          .strict()
+          .parse(await body(request));
+        return json(response, 202, {
+          report: manager.reports.queueNotifications(reportNoticeMatch[1]!, reportNoticeMatch[2]!),
+        });
+      }
+      const reportDocumentMatch =
+        /^\/api\/sessions\/([0-9a-f-]{36})\/reports\/([0-9a-f-]{36})\/document$/.exec(path);
+      if (reportDocumentMatch && request.method === 'GET') {
+        return json(
+          response,
+          200,
+          manager.reports.document(reportDocumentMatch[1]!, reportDocumentMatch[2]!),
+        );
+      }
+      const receivedReportsMatch = /^\/api\/sessions\/([0-9a-f-]{36})\/reports\/received$/.exec(
+        path,
+      );
+      if (receivedReportsMatch && request.method === 'GET') {
+        const id = receivedReportsMatch[1]!;
+        if (!manager.store.get(id)) return json(response, 404, { error: '会话不存在' });
+        return json(response, 200, {
+          handoffs: manager.reports
+            .history(id)
+            .flatMap((e) => ('handoff' in e ? [{ ...e.handoff, at: e.at }] : [])),
+        });
+      }
       const reportMatch = /^\/api\/sessions\/([0-9a-f-]{36})\/reports$/.exec(path);
       if (reportMatch) {
         const id = reportMatch[1]!;
@@ -426,7 +457,7 @@ export function createDashboard(manager: Manager, token: string, setup?: SetupSe
           });
         }
         if (request.method === 'GET' && action === 'events')
-          return json(response, 200, manager.store.events(id));
+          return json(response, 200, manager.reports.history(id));
         if (request.method === 'POST') {
           if (action === 'compact') {
             const data = z

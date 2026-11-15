@@ -67,6 +67,15 @@ for (const agent of ['codex', 'claude'] as const)
       f.store.save(topic);
       f.manager.closeSession(main.id);
       f.manager.closeSession(topic.id);
+      await until(() =>
+        [main, topic].every((s) => {
+          const r = f.store.reports.list(s.id)[0];
+          return (
+            r?.state === 'ready' &&
+            r.notifications?.every((n) => !['pending', 'sending'].includes(n.state))
+          );
+        }),
+      );
       const before = f.store.list(),
         history = f.store.events(main.id);
       for (const thread of ['', 'om_topic', 'om_unbound']) {

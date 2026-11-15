@@ -361,6 +361,11 @@ export interface Channel {
   platform: Platform;
   start(onMessage: (message: Incoming) => Promise<void>): Promise<void>;
   send(message: Incoming, text: string, signal?: AbortSignal): Promise<void>;
+  sendDocument?(
+    message: Incoming,
+    document: { filename: string; content: string },
+    signal?: AbortSignal,
+  ): Promise<void>;
   checkGroupPermission?(chatId: string): Promise<GroupPermission>;
   sendManagement?(message: Incoming, view: ManagementView, signal?: AbortSignal): Promise<void>;
   sendManagementFallback?(message: Incoming, text: string): Promise<void>;

@@ -38,6 +38,7 @@ const schema = z
       .optional(),
     defaultAgent: z.enum(['codex', 'claude', 'opencode']).default('codex'),
     defaultInstructions: instructionsSchema.optional(),
+    handoffInlineLimit: z.number().int().min(1).max(1000).optional(),
     topicRouterAgent: z.enum(['codex', 'claude']).optional(),
     defaultWorkspace: z.string().default('default'),
     workspaces: z.record(z.string(), z.string()).refine((v) => Object.keys(v).length > 0),

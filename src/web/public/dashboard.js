@@ -1,3 +1,33 @@
+export function showReportDocument(doc) {
+  const element = (tag, text) => {
+    const e = document.createElement(tag);
+    if (text !== undefined) e.textContent = text;
+    return e;
+  };
+  const dialog = element('dialog'),
+    content = element('pre', doc.content),
+    actions = element('div'),
+    close = element('button', '关闭'),
+    download = element('button', '下载 Markdown');
+  dialog.className = 'handoff-document';
+  actions.className = 'dialog-actions';
+  close.onclick = () => dialog.close();
+  download.onclick = () => {
+    const url = URL.createObjectURL(
+        new Blob([doc.content], { type: 'text/markdown;charset=utf-8' }),
+      ),
+      a = element('a');
+    a.href = url;
+    a.download = doc.filename;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+  actions.append(download, close);
+  dialog.append(element('h2', doc.filename), content, actions);
+  document.body.append(dialog);
+  dialog.addEventListener('close', () => dialog.remove(), { once: true });
+  dialog.showModal();
+}
 // Rank actionable native requests, independently of tree ancestry/execution state.
 export function taskInbox(tree, interactions = [], opened = {}, now = Date.now()) {
   const pending = new Map();
@@ -1015,6 +1045,42 @@ export function createConsole({ api, refresh, selectSession, showError }) {
         unknown: '状态待核对',
       },
       status = { pending: '等待整理', running: '正在总结', ready: '可供接续', failed: '整理失败' };
+    const received = el('section', 'task-result');
+    received.append(
+      el('h3', '', '收到的子任务交接资料'),
+      el('p', 'footnote', '这些是已登记的资料；Agent 是否已获得它们，请查看对话中该轮的实际输入。'),
+    );
+    section.append(received);
+    void api(`/sessions/${n.session.id}/reports/received`)
+      .then((data) => {
+        if (!section.isConnected) return;
+        if (!data.handoffs.length) received.append(el('p', 'muted', '暂无关联交接资料。'));
+        for (const h of data.handoffs) {
+          const item = el('details', 'task-settings');
+          item.append(
+            el(
+              'summary',
+              '',
+              `${h.sourceTitle} · v${h.version} · ${labels[h.outcome] || h.outcome}`,
+            ),
+            el('p', '', h.summary),
+          );
+          item.append(
+            button(
+              '查看交接文档 ↗',
+              run(async () =>
+                showReportDocument(
+                  await api(`/sessions/${n.session.id}/reports/${h.reportId}/document`),
+                ),
+              ),
+            ),
+          );
+          received.append(item);
+        }
+      })
+      .catch(() => {
+        received.append(el('p', 'form-error', '交接资料读取失败。'));
+      });
     const generate = button(
       '生成 / 重新总结',
       run(async () => {
@@ -1056,6 +1122,37 @@ export function createConsole({ api, refresh, selectSession, showError }) {
             ),
           );
           if (r.warning) item.append(el('p', 'error', r.warning));
+          if (r.state === 'ready' && r.trigger === 'close' && !r.notifications) {
+            const notify = button(
+              '发送报告通知',
+              run(async () => {
+                notify.disabled = true;
+                try {
+                  await api(`/sessions/${n.session.id}/reports/${r.id}/notifications`, {});
+                  await refresh();
+                } finally {
+                  notify.disabled = false;
+                }
+              }),
+            );
+            item.append(notify);
+          }
+          for (const n of r.notifications ?? []) {
+            const states = {
+              pending: '待发送',
+              sending: '发送中',
+              delivered: '已送达',
+              unconfirmed: '结果未确认，未自动重发',
+              skipped: '未发送',
+            };
+            item.append(
+              el(
+                'p',
+                n.state === 'unconfirmed' ? 'error' : 'muted',
+                `${n.role === 'source' ? '原会话' : '直接父会话'}通知：${states[n.state] || n.state}${n.detail ? `（${n.detail}）` : ''}`,
+              ),
+            );
+          }
           const b = r.body;
           if (b) {
             item.append(el('p', 'task-objective', b.summary));

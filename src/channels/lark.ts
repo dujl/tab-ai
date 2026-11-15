@@ -573,6 +573,34 @@ export class LarkChannel implements Channel {
       if (response.code !== 0) throw new Error('Lark rejected the message');
     }
   }
+  async sendDocument(
+    message: Incoming,
+    document: { filename: string; content: string },
+    signal?: AbortSignal,
+  ): Promise<void> {
+    signal?.throwIfAborted();
+    const uploaded = await this.client.im.file.create({
+      data: {
+        file_type: 'stream',
+        file_name: document.filename,
+        file: Buffer.from(document.content, 'utf8'),
+      },
+    });
+    if (!uploaded?.file_key) throw Error('飞书交接文档上传未确认；完整报告仍保留。');
+    signal?.throwIfAborted();
+    const replyTo = this.replyTarget(message),
+      data = { msg_type: 'file', content: JSON.stringify({ file_key: uploaded.file_key }) };
+    const sent = replyTo
+      ? await this.client.im.message.reply({
+          path: { message_id: replyTo },
+          data: { ...data, reply_in_thread: true },
+        })
+      : await this.client.im.message.create({
+          params: { receive_id_type: 'chat_id' },
+          data: { ...data, receive_id: message.route.conversation },
+        });
+    if (sent.code !== 0) throw Error('飞书交接文档发送未确认；未自动重试。');
+  }
   async stop(): Promise<void> {
     this.approvalDetails.stop();
     this.connecting?.abort();

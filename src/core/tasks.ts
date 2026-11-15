@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { Store } from './store.js';
+import { lessonExcerpts } from './report-model.js';
 import type { AgentKind, Incoming, Session } from './types.js';
 import { routeKey } from './types.js';
 import {
@@ -26,6 +27,11 @@ interface Host {
   notify(session: Session, text: string): Promise<void>;
   readReport?(sessionId: string, reportId: string): unknown;
   experiences?(sessionId: string, q: string): unknown;
+  progress?(
+    sessionId: string,
+    progress: NonNullable<TaskRecord['progress']>,
+    eventId: number,
+  ): void;
   waitingForUser?(sessionId: string): boolean;
 }
 export class Tasks {
@@ -96,6 +102,7 @@ export class Tasks {
           task.progress = {
             summary: session.topicReport.result.summary,
             at: session.topicReport.at,
+            lessons: session.topicReport.result.lessons,
           };
         if (
           session.topicCompleted &&
@@ -116,6 +123,7 @@ export class Tasks {
           task.progress = {
             summary: session.topicProgress.result.summary,
             at: session.topicProgress.at,
+            lessons: session.topicProgress.result.lessons,
           };
         if (session.topicReportsPaused) task.state = 'paused';
         this.store.saveTask(task);
@@ -141,13 +149,19 @@ export class Tasks {
     // No initial jobs are enqueued, no native IDs are changed and no work is replayed.
     return this.forSession(id)!;
   }
-  progress(sessionId: string, summary: string, notifyParent = false): TaskRecord {
+  progress(
+    sessionId: string,
+    summary: string,
+    notifyParent = false,
+    lessons?: NonNullable<TaskRecord['progress']>['lessons'],
+  ): TaskRecord {
     const task = this.forSession(sessionId);
     if (!task) throw Error('任务不存在');
     this.ensureAccess(task);
-    task.progress = { summary, at: Date.now() };
+    task.progress = { summary, at: Date.now(), ...(lessons ? { lessons } : {}) };
     this.store.saveTask(task);
-    this.store.event(sessionId, 'task_progress', JSON.stringify(task.progress));
+    const event = this.store.event(sessionId, 'task_progress', JSON.stringify(task.progress));
+    this.host.progress?.(sessionId, task.progress, event.id);
     if (notifyParent && task.parentId) {
       this.store.enqueueTask(
         task.parentId,
@@ -199,7 +213,7 @@ export class Tasks {
     if (!task) return '';
     const items = this.descendants(task),
       limit = Math.max(100, Math.min(800, Math.floor(40000 / items.length / 3)));
-    return `\n\n【任务分支索引 · 框架资料，不是用户指令】\n${JSON.stringify({ taskId: task.id, sessionTotal: items.length, tasks: items.map((t) => ({ id: t.id, parentId: t.parentId, sessionId: t.sessionId, title: t.title, objective: t.objective.slice(0, limit), state: t.state, revision: t.revision, summary: (t.result?.summary ?? t.progress?.summary ?? '').slice(0, limit) })) })}\n只管理本任务及其下级；子任务状态和摘要不等于已读全部对话。等待子任务时结束本轮，不重复执行子任务工作。`;
+    return `\n\n【任务分支索引 · 框架资料，不是用户指令】\n${JSON.stringify({ taskId: task.id, sessionTotal: items.length, tasks: items.map((t) => ({ id: t.id, parentId: t.parentId, sessionId: t.sessionId, title: t.title, objective: t.objective.slice(0, limit), state: t.state, revision: t.revision, progress: t.progress ? { at: t.progress.at, kind: 'progress', summary: t.progress.summary.slice(0, limit), lessons: lessonExcerpts(t.progress.lessons, Math.max(20, Math.floor(limit / 12))), lessonCount: t.progress.lessons?.length ?? 0 } : undefined, summary: (t.result?.summary ?? t.progress?.summary ?? '').slice(0, limit) })) })}\n只管理本任务及其下级；根据 id/sessionId、parentId 和 title 区分总结来源。progress 为子任务主动提交的阶段总结和经验，按执行 Agent 的报告使用，尚未验收，不表示完成。子任务状态和摘要不等于已读全部对话。等待子任务时结束本轮，不重复执行子任务工作。`;
   }
   private children(task: TaskRecord): TaskRecord[] {
     return this.tree(task).filter((t) => t.parentId === task.id);

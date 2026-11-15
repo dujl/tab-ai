@@ -60,7 +60,7 @@ async function tool(run: AgentRun, payload: unknown) {
 }
 const delay = () => new Promise((r) => setTimeout(r, 60));
 
-test('an incomplete preparation report and legacy tool payloads stay in the child and never wake the main', async () => {
+test('incomplete preparation reports are visible to the parent next turn without waking it or marking completion', async () => {
   const f = setup();
   try {
     f.agent.handler = async (run) => {
@@ -83,7 +83,7 @@ test('an incomplete preparation report and legacy tool payloads stay in the chil
     assert.equal(f.store.topicUpdates().length, 0);
     assert.equal(f.agent.inputs.length, 1);
     assert.ok(!f.manager.topics.context(p).includes('requirements.md'));
-    assert.ok(!f.manager.topics.context(p).includes('尚未实现接口'));
+    assert.ok(f.manager.topics.context(p).includes('尚未实现接口'));
     assert.match(f.manager.topics.context(p), /进行中/);
     assert.equal(
       f.store
