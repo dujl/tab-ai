@@ -450,6 +450,12 @@ dialog {
   max-height: 50vh;
   overflow: auto;
 }
+.agent-input pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 55vh;
+  overflow: auto;
+}
 dialog::backdrop {
   background: #000b;
   backdrop-filter: blur(4px);

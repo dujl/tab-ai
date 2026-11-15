@@ -3,6 +3,7 @@ import {
   sessionDisplayTitle,
   createExecutionRecords,
   createAgentPlans,
+  showReportDocument,
 } from '/dashboard.js';
 const $ = (id) => document.getElementById(id);
 const labels = {
@@ -40,8 +41,12 @@ let maintenanceTarget,
   maintenanceRevision,
   maintenanceMode,
   maintenanceGeneration = 0;
+let transcriptCursor,
+  transcriptLoaded = false;
+const transcriptRows = new Map();
 const drafts = new Map(),
   sending = new Set();
+let shownError, pollingError;
 
 function node(tag, className, text) {
   const element = document.createElement(tag);
@@ -50,33 +55,49 @@ function node(tag, className, text) {
   return element;
 }
 function showError(error) {
+  shownError = error;
   $('error').textContent = error.message || String(error);
   $('error').hidden = false;
 }
 let stateCache;
 async function api(path, data) {
-  const response = await fetch(`/api${path}`, {
-    method: data === undefined ? 'GET' : 'POST',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json',
-      ...(path === '/state' && data === undefined && stateCache?.token === token
-        ? { 'If-None-Match': stateCache.etag }
-        : {}),
-    },
-    ...(data === undefined ? {} : { body: JSON.stringify(data) }),
-  });
-  if (response.status === 401) {
-    if (!$('auth-dialog').open) $('auth-dialog').showModal();
-    throw new Error('访问令牌无效，请从本机终端获取。');
+  try {
+    const response = await fetch(`/api${path}`, {
+      method: data === undefined ? 'GET' : 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        ...(path === '/state' && data === undefined && stateCache?.token === token
+          ? { 'If-None-Match': stateCache.etag }
+          : {}),
+      },
+      ...(data === undefined ? {} : { body: JSON.stringify(data) }),
+      ...(data === undefined ? { signal: AbortSignal.timeout(15_000) } : {}),
+    });
+    if (response.status === 401) {
+      if (!$('auth-dialog').open) $('auth-dialog').showModal();
+      throw new Error('访问令牌无效，请从本机终端获取。');
+    }
+    if (response.status === 304 && path === '/state' && stateCache?.token === token)
+      return stateCache.value;
+    const result = await response.json();
+    if (path === '/state' && response.ok)
+      stateCache = { token, etag: response.headers.get('etag'), value: result };
+    if (!response.ok)
+      throw Object.assign(new Error(result.error || '请求失败'), { status: response.status });
+    return result;
+  } catch (error) {
+    if (error instanceof TypeError || ['TimeoutError', 'AbortError'].includes(error.name))
+      throw Object.assign(
+        new Error(
+          data === undefined
+            ? '暂时无法连接服务，请检查网络或服务状态。'
+            : '连接中断，操作结果尚未确认。请先查看当前状态，避免重复提交。',
+        ),
+        { network: true },
+      );
+    throw error;
   }
-  if (response.status === 304 && path === '/state' && stateCache?.token === token)
-    return stateCache.value;
-  const result = await response.json();
-  if (path === '/state' && response.ok)
-    stateCache = { token, etag: response.headers.get('etag'), value: result };
-  if (!response.ok) throw new Error(result.error || '请求失败');
-  return result;
 }
 function safe(fn) {
   return (...args) =>
@@ -91,6 +112,9 @@ function setSelected(id) {
   $('prompt').value = drafts.get(id) || '';
   eventSignature = '';
   interactionSignature = '';
+  transcriptRows.clear();
+  transcriptCursor = undefined;
+  transcriptLoaded = false;
   $('messages').replaceChildren();
   $('interactions').replaceChildren();
   $('native-info').hidden = true;
@@ -175,9 +199,30 @@ function renderEvents(events) {
     [...container.querySelectorAll('details[open]')].map((e) => e.dataset.key),
   );
   const groups = new Map(),
+    inputs = new Map(),
+    coveredUsers = new Set(),
     visible = [];
+  for (const e of events)
+    if (e.type === 'agent_input') {
+      try {
+        coveredUsers.add(JSON.parse(e.text).userEventId);
+      } catch {}
+    }
+
   for (const event of events) {
-    if (event.type === 'tool') {
+    if (['user', 'topic_summary_input'].includes(event.type) && coveredUsers.has(event.id))
+      continue;
+    if (event.type === 'agent_input') {
+      try {
+        const input = JSON.parse(event.text);
+        if (inputs.has(input.runId)) inputs.get(input.runId).input = input;
+        else {
+          const row = { ...event, input };
+          inputs.set(input.runId, row);
+          visible.push(row);
+        }
+      } catch {}
+    } else if (event.type === 'tool' || event.type === 'agent_tool') {
       try {
         const tool = JSON.parse(event.text);
         if (!tool.runId || !tool.id) continue;
@@ -186,12 +231,22 @@ function renderEvents(events) {
           groups.set(tool.runId, group);
           visible.push(group);
         }
-        groups.get(tool.runId).tools.set(tool.id, tool);
+        const tools = groups.get(tool.runId).tools,
+          prior = tools.get(tool.id);
+        if (!prior?.full || event.type === 'agent_tool')
+          tools.set(tool.id, { ...tool, full: event.type === 'agent_tool' });
       } catch {}
     } else if (
-      ['user', 'assistant', 'error', 'delivery_error', 'activity', 'system', 'decision'].includes(
-        event.type,
-      )
+      [
+        'user',
+        'assistant',
+        'error',
+        'delivery_error',
+        'activity',
+        'system',
+        'decision',
+        'topic_summary_input',
+      ].includes(event.type)
     )
       visible.push(event);
   }
@@ -238,6 +293,63 @@ function renderEvents(events) {
         return group;
       }
       if (event.type === 'activity') return node('div', 'activity', `↳ ${event.text}`);
+      if (event.type === 'agent_input') {
+        const input = event.input,
+          message = node('article', 'message user');
+        message.append(
+          node(
+            'div',
+            'meta',
+            `${input.origin === 'child-report' ? 'FRAMEWORK' : 'YOU'} · ${new Date(event.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
+          ),
+          node('div', 'body', input.userText),
+        );
+        const details = node('details', 'agent-input');
+        details.dataset.key = `input:${input.runId}`;
+        details.open = expanded.has(details.dataset.key);
+        details.append(
+          node(
+            'summary',
+            '',
+            `${input.status === 'submitted' ? '已向原生 Agent 提交' : '输入已准备，尚未确认提交原生接口'} · 查看完整输入与附加背景`,
+          ),
+          node(
+            'p',
+            'footnote',
+            `${input.agent} · ${input.workspace} · ${input.nativeId || '原生会话待建立'}`,
+          ),
+          node('pre', '', input.text),
+        );
+        if (input.instructions)
+          details.append(
+            node(
+              'strong',
+              '',
+              `本轮框架提供的附加指令（${input.instructionMode || '原生配置字段'}）`,
+            ),
+            node('pre', '', input.instructions),
+          );
+        for (const h of input.handoffs || []) {
+          const report = node('details', 'task-settings');
+          report.append(
+            node(
+              'summary',
+              '',
+              `关联交接资料：${h.sourceTitle} · ${h.sourceSessionId.slice(0, 8)} · v${h.version}`,
+            ),
+            node('p', '', h.summary),
+          );
+          const view = node('button', '', '查看交接文档 ↗'),
+            caller = selected;
+          view.onclick = safe(async () =>
+            showReportDocument(await api(`/sessions/${caller}/reports/${h.reportId}/document`)),
+          );
+          report.append(view);
+          details.append(report);
+        }
+        message.append(details);
+        return message;
+      }
       const message = node('article', `message ${event.type}`),
         meta = node('div', 'meta');
       meta.append(
@@ -262,6 +374,26 @@ function renderEvents(events) {
       return message;
     }),
   );
+  const coverage = node(
+    'p',
+    'footnote',
+    '展示框架实际提交的输入、公开回复和工具事件；原生未暴露的内部上下文不在此列，旧轮次可能缺少输入快照。',
+  );
+  container.prepend(coverage);
+  if (transcriptCursor) {
+    const more = node('button', '', '加载更早的对话'),
+      caller = selected;
+    more.onclick = safe(async () => {
+      more.disabled = true;
+      const page = await api(`/sessions/${caller}/transcript?before=${transcriptCursor}`);
+      if (caller !== selected) return;
+      for (const e of page.events) transcriptRows.set(e.id, e);
+      transcriptCursor = page.nextBefore;
+      eventSignature = '';
+      renderEvents([...transcriptRows.values()].sort((a, b) => a.id - b.id));
+    });
+    container.prepend(more);
+  }
   if (!visible.length)
     container.append(
       node('p', 'empty-messages', '会话已就绪。发送第一条消息，让 Agent 开始工作。'),
@@ -513,15 +645,36 @@ async function refresh() {
     }
     if (selected && !$('workspace').hidden) {
       const id = selected;
-      const events = await api(`/sessions/${id}/events`);
-      if (id === selected) renderEvents(events);
+      let page;
+      try {
+        page = await api(`/sessions/${id}/transcript`);
+      } catch (error) {
+        if (error.status !== 404) throw error;
+        page = { events: await api(`/sessions/${id}/events`) };
+      }
+      if (id === selected) {
+        for (const e of page.events) transcriptRows.set(e.id, e);
+        if (!transcriptLoaded) {
+          transcriptCursor = page.nextBefore;
+          transcriptLoaded = true;
+        }
+        renderEvents([...transcriptRows.values()].sort((a, b) => a.id - b.id));
+      }
     }
     $('connection-dot').className = '';
     $('connection-label').textContent = '本地已连接';
+    if (pollingError && shownError === pollingError) {
+      $('error').hidden = true;
+      shownError = undefined;
+    }
+    pollingError = undefined;
   } catch (error) {
-    $('connection-dot').className = 'off';
-    $('connection-label').textContent = '连接断开';
-    showError(error);
+    $('connection-dot').className = error.network ? 'off' : '';
+    $('connection-label').textContent = error.network ? '连接断开，正在重连' : '数据读取失败';
+    pollingError = error.network
+      ? new Error('暂时无法连接服务，正在自动重连。已显示的内容和未发送的输入会保留。')
+      : error;
+    showError(pollingError);
   } finally {
     polling = false;
   }
@@ -973,3 +1126,7 @@ else void refresh();
 setInterval(() => {
   if (!document.hidden) void refresh();
 }, 1500);
+window.addEventListener('online', () => void refresh());
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) void refresh();
+});

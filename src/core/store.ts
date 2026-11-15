@@ -717,6 +717,19 @@ export class Store {
       )
       .all(sessionId) as unknown as StoredEvent[];
   }
+  transcriptEvents(
+    sessionId: string,
+    before = Number.MAX_SAFE_INTEGER,
+    limit = 120,
+  ): StoredEvent[] {
+    return this.db
+      .prepare(
+        `SELECT id,session_id AS sessionId,type,text,at FROM events
+      WHERE session_id=? AND id<? AND type IN ('user','assistant','tool','agent_tool','agent_input','error','decision','agent_run','topic_summary_input')
+      ORDER BY id DESC LIMIT ?`,
+      )
+      .all(sessionId, before, limit + 1) as unknown as StoredEvent[];
+  }
   latestEvent(sessionId: string, type: string): StoredEvent | undefined {
     return this.db
       .prepare(

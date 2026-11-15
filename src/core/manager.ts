@@ -1939,7 +1939,7 @@ export class Manager {
     };
     session.status = 'running';
     this.save(session);
-    this.store.event(
+    const userEvent = this.store.event(
       session.id,
       message.topicUpdateId ? 'topic_summary_input' : 'user',
       message.text,
@@ -2022,6 +2022,23 @@ export class Manager {
       bridge = await shared;
       controller.signal.throwIfAborted();
       session.taskToolsEnabled = true;
+      const inputSnapshot = {
+        runId: run.runId,
+        userEventId: userEvent.id,
+        userText: message.text,
+        origin: message.topicUpdateId ? 'child-report' : 'user',
+        agent: session.agent,
+        nativeId: session.nativeId,
+        workspace: session.workspace,
+        model: session.settings?.model,
+        text,
+        handoffs: this.reports.references(session),
+      };
+      this.store.event(
+        session.id,
+        'agent_input',
+        JSON.stringify({ ...inputSnapshot, status: 'prepared' }),
+      );
       await this.agents[session.agent].run({
         session,
         text,
@@ -2029,6 +2046,13 @@ export class Manager {
         priorPlan: priorAgentPlan(this.store, session),
         ...(bridge ? { taskBridge: { url: bridge.url, token: bridge.token } } : {}),
         hooks: {
+          input: (value) => {
+            this.store.event(
+              session.id,
+              'agent_input',
+              JSON.stringify({ ...inputSnapshot, ...value, status: 'submitted' }),
+            );
+          },
           nativeId: (id) => {
             session.nativeId = id;
             this.save(session);
@@ -2049,6 +2073,11 @@ export class Manager {
             if (!controller.signal.aborted) this.recordUsage(session, value);
           },
           tool: (event) => {
+            this.store.event(
+              session.id,
+              'agent_tool',
+              JSON.stringify({ runId: run.runId, ...event }),
+            );
             progress.record(event);
           },
           plan: (value) => {

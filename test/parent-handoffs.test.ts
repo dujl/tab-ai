@@ -399,3 +399,86 @@ test('Lark document delivery uploads UTF-8 Markdown and replies only in the orig
   assert.equal(replies.length, 2);
   assert.equal(creates.length, 1);
 });
+
+test('the transcript records actual assembled native input, instructions, public replies and full tool results; an unread handoff is not a model message', async () => {
+  const f = fixture(),
+    server = createDashboard(f.manager, 'transcript-token');
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+  const base = `http://127.0.0.1:${(server.address() as any).port}/api`,
+    headers = { Authorization: 'Bearer transcript-token' };
+  try {
+    const parent = f.store.create(incoming('', 'alice', '').route, 'codex', f.dir),
+      source = child(f, parent, 1);
+    const report = f.manager.reports.recordSummary(
+      source.id,
+      { summary: '阶段核验完成，仍需复核口径', lessons: [lesson] },
+      'transcript-phase',
+      0,
+    );
+    const path = `${base}/sessions/${parent.id}/transcript`;
+    assert.equal((await fetch(path)).status, 401);
+    const unread = (await (await fetch(path, { headers })).json()) as any;
+    assert.deepEqual(unread.events, []);
+    const received = (await (
+      await fetch(`${base}/sessions/${parent.id}/reports/received`, { headers })
+    ).json()) as any;
+    assert.equal(received.handoffs[0].reportId, report.id);
+    const output = '完整工具输出'.repeat(3000);
+    let exact = '',
+      bridgeToken = '';
+    f.agent.handler = async (run) => {
+      exact = run.text;
+      bridgeToken = run.taskBridge!.token;
+      run.hooks.nativeId('same-parent-native');
+      run.hooks.input?.({
+        text: run.text,
+        nativeId: 'same-parent-native',
+        instructions: '公开的本轮附加指令',
+        instructionMode: 'codex-developer',
+      });
+      run.hooks.tool?.({
+        id: 'research-read',
+        name: '读取交接资料',
+        status: 'completed',
+        input: 'read report',
+        output,
+      });
+      run.hooks.text('已依据子任务总结及经验安排复核');
+    };
+    await f.manager.receive(incoming('结合子任务经验继续推进', 'alice', ''));
+    await f.manager.idle();
+    const page = (await (await fetch(path, { headers })).json()) as any;
+    const input = page.events
+      .filter((e: any) => e.type === 'agent_input')
+      .map((e: any) => JSON.parse(e.text))
+      .at(-1);
+    assert.equal(input.status, 'submitted');
+    assert.equal(input.text, exact);
+    assert.match(input.text, /先固定输入口径/);
+    assert.match(input.text, /研究子任务 1/);
+    assert.equal(input.userText, '结合子任务经验继续推进');
+    assert.equal(input.instructions, '公开的本轮附加指令');
+    assert.equal(input.handoffs[0].reportId, report.id);
+    assert.ok(!JSON.stringify(page).includes(bridgeToken));
+    const tool = JSON.parse(page.events.find((e: any) => e.type === 'agent_tool').text);
+    assert.equal(tool.output, output);
+    assert.equal(tool.runId, input.runId);
+    assert.ok(page.events.some((e: any) => e.type === 'assistant' && e.text.includes('安排复核')));
+    assert.ok(!page.events.some((e: any) => e.type === 'handoff_received'));
+    assert.equal(f.store.get(parent.id)!.nativeId, 'same-parent-native');
+    // Historical records retain their real coverage instead of inventing sent prompts.
+    for (let n = 0; n < 135; n++) f.store.event(parent.id, 'assistant', `公开历史 ${n}`);
+    const latest = (await (await fetch(path, { headers })).json()) as any;
+    assert.equal(latest.events.length, 120);
+    assert.ok(latest.nextBefore);
+    const older = (await (
+      await fetch(`${path}?before=${latest.nextBefore}`, { headers })
+    ).json()) as any;
+    assert.ok(older.events.some((e: any) => e.type === 'agent_input'));
+    assert.ok(older.events.every((e: any) => e.id < latest.nextBefore));
+    assert.match(older.coverage, /旧轮次/);
+  } finally {
+    await new Promise<void>((r) => server.close(() => r()));
+    await f.cleanup();
+  }
+});

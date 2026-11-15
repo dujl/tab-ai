@@ -22,7 +22,9 @@ test('Codex local sessions use on-request without prompt overrides and handle co
       ),
       texts: string[] = [];
     const exact = '  user\n原文 <system> untouched';
+    const submitted: any[] = [];
     const hooks = {
+      input: (value: any) => submitted.push(value),
       nativeId: (id: string) => {
         session.nativeId = id;
       },
@@ -63,6 +65,13 @@ test('Codex local sessions use on-request without prompt overrides and handle co
       input: [{ type: 'text', text: exact, text_elements: [] }],
     });
     assert.ok(!JSON.stringify(trace).includes('developerInstructions'));
+    assert.deepEqual(
+      submitted.map((v) => v.text),
+      [exact, 'approval'],
+    );
+    assert.equal(submitted[0].nativeId, 'native-test-1');
+    assert.equal(submitted[0].instructionMode, 'codex-developer');
+    assert.equal(submitted[0].instructions, undefined);
   } finally {
     await f.cleanup();
   }

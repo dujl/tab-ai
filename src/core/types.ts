@@ -170,6 +170,12 @@ export interface ToolRunView {
   total: number;
 }
 export interface AgentHooks {
+  input?(value: {
+    text: string;
+    instructions?: string;
+    nativeId?: string;
+    instructionMode?: 'codex-developer' | 'claude-append' | 'opencode-system';
+  }): void;
   nativeId(id: string): void;
   text(text: string): void;
   activity(text: string): void;

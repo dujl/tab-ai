@@ -487,6 +487,12 @@ export class CodexAdapter implements AgentAdapter {
       this.maintenance.attach(session.id, rpc);
       hooks.nativeId(result.thread.id);
       signal.throwIfAborted();
+      hooks.input?.({
+        text,
+        nativeId: result.thread.id,
+        instructions: codexInstructions(session),
+        instructionMode: 'codex-developer',
+      });
       await rpc.request('turn/start', {
         threadId: result.thread.id,
         cwd: session.workspace,
