@@ -27,25 +27,27 @@ export function larkCard(prompt: CardPrompt) {
       ],
     });
   if (prompt.status) elements.push({ tag: 'div', text: plain(prompt.status) });
-  else if (!prompt.question)
-    elements.push({
-      tag: 'action',
-      actions: [
-        ...approvalOptions(prompt.request).map((o) => ({
-          tag: 'button',
-          text: plain(o.label),
-          type:
-            o.id === 'allow' || o.id === 'session'
-              ? 'primary'
-              : o.id === 'deny'
-                ? 'danger'
-                : 'default',
-          value: { id: prompt.id, action: o.id },
-        })),
-        { tag: 'button', text: plain('查看完整请求'), value: { id: prompt.id, action: 'details' } },
-      ],
-    });
-  else {
+  else if (!prompt.question) {
+    const actions = [
+      ...approvalOptions(prompt.request).map((o) => ({
+        tag: 'button',
+        text: plain(o.label),
+        type:
+          o.id === 'allow' || o.id === 'session' || o.id === 'auto'
+            ? 'primary'
+            : o.id === 'deny'
+              ? 'danger'
+              : 'default',
+        value: { id: prompt.id, action: o.id },
+        ...(o.id === 'auto'
+          ? { confirm: { title: plain('开启本会话自动允许？'), text: plain(o.description ?? '') } }
+          : {}),
+      })),
+      { tag: 'button', text: plain('查看完整请求'), value: { id: prompt.id, action: 'details' } },
+    ];
+    for (let i = 0; i < actions.length; i += 3)
+      elements.push({ tag: 'action', actions: actions.slice(i, i + 3) });
+  } else {
     const q = prompt.question,
       fields: object[] = [];
     if (q.options?.length)
@@ -131,7 +133,7 @@ const actionSchema = z.object({
   action: z.object({
     value: z.object({
       id: z.string().uuid(),
-      action: z.enum(['allow', 'session', 'deny', 'cancel', 'submit', 'details']),
+      action: z.enum(['allow', 'session', 'auto', 'deny', 'cancel', 'submit', 'details']),
     }),
     form_value: z
       .object({

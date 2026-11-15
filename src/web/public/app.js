@@ -492,21 +492,25 @@ function renderInteractions() {
             card.append(node('p', 'footnote', `${option.label}：${option.description}`));
           const b = node(
             'button',
-            option.id === 'allow' || option.id === 'session' ? 'primary' : '',
+            ['allow', 'session', 'auto'].includes(option.id) ? 'primary' : '',
             option.label,
           );
           b.title = option.description || '';
-          b.onclick = () =>
-            decide(
-              option.id === 'session'
-                ? { allow: true, scope: 'session' }
-                : option.id === 'cancel'
-                  ? { allow: false, cancel: true }
-                  : { allow: option.id === 'allow' },
+          b.onclick = () => {
+            if (option.id === 'auto' && !window.confirm(option.description)) return;
+            return decide(
+              option.id === 'auto'
+                ? { allow: true, scope: 'auto' }
+                : option.id === 'session'
+                  ? { allow: true, scope: 'session' }
+                  : option.id === 'cancel'
+                    ? { allow: false, cancel: true }
+                    : { allow: option.id === 'allow' },
             );
+          };
           actions.append(b);
         }
-        if (!options.some((o) => o.id === 'session'))
+        if (!options.some((o) => ['session', 'auto'].includes(o.id)))
           card.append(node('p', 'footnote', '本次未提供会话内授权，不能扩大为“允许所有”。'));
         card.append(actions);
       } else {

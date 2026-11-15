@@ -38,7 +38,7 @@ export function validateAnswer(request: Interaction, answer: Answer): void {
   if (request.kind === 'approval') {
     if (!('allow' in answer) || typeof answer.allow !== 'boolean')
       throw new Error('此请求需要允许或拒绝。');
-    if (answer.scope !== undefined && !['once', 'session'].includes(answer.scope))
+    if (answer.scope !== undefined && !['once', 'session', 'auto'].includes(answer.scope))
       throw Error('无效的审批范围');
     if (
       (!answer.allow && answer.scope !== undefined) ||

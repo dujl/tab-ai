@@ -1719,7 +1719,7 @@ export function createExecutionRecords({ api, showError }) {
               element(
                 'p',
                 '',
-                `授权范围：${record.answer.scope === 'session' ? '仅此会话（当时的原生授权范围）' : '仅本次'}`,
+                `授权范围：${record.answer.scope === 'auto' ? '本会话自动允许命令及文件审批' : record.answer.scope === 'session' ? '仅此会话（当时的原生授权范围）' : '仅本次'}${record.automatic ? ' · 自动批准' : ''}`,
               ),
             );
           if (record.answer)

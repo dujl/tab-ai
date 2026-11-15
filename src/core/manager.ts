@@ -11,7 +11,12 @@ import { reportNotification, reportNotificationStatus } from './report-notificat
 import { reportPresentation } from './report-document.js';
 import type { SessionReport, ReportNotification } from './report-model.js';
 import { needsExplicitManagement, fallbackDecision } from './routing-fallback.js';
-import { approvalModes, approvalPolicyContext, selectedApprovalPolicy } from './approval-policy.js';
+import {
+  approvalModes,
+  approvalPolicyContext,
+  selectedApprovalPolicy,
+  supportsAutoApproval,
+} from './approval-policy.js';
 import { agentPlanSchema, agentPlansText, priorAgentPlan } from './agent-plans.js';
 import { setMaxListeners } from 'node:events';
 import { deliveryDeadline } from './delivery-deadline.js';
@@ -23,7 +28,13 @@ import {
   compactionText,
   type CompactionRecord,
 } from './maintenance-diagnostics.js';
-import { approvalAnswer, approvalDecisionText, type ApprovalAction } from './approval-decisions.js';
+import {
+  approvalAnswer,
+  approvalDecisionText,
+  approvalOptions,
+  autoApprovalChoice,
+  type ApprovalAction,
+} from './approval-decisions.js';
 import QRCode from 'qrcode';
 import { Tasks } from './tasks.js';
 import { taskBridge } from './task-bridge.js';
@@ -163,7 +174,7 @@ const HELP = `tab-ai 管理命令（不会发送给 agent）：
 /tab history — 查看最近对话
 /tab tools [序号] — 查看最近一轮工具调用、状态和结果
 /tab files — 查看附件及下载状态；/tab files download <序号|all> 按需下载；/tab files sync 仅同步旧附件列表
-/tab approve <请求ID> allow|session|deny|cancel — 按原生请求选择授权范围
+/tab approve <请求ID> allow|session|auto|deny|cancel — 选择本次、原生范围或本会话自动允许
 /tab approval [策略|clear] — 当前会话审批策略与临时授权
 /tab todos — 查看 Agent 原生待办与执行步骤
 /tab answer <请求ID> {"问题ID":["答案"]} — 回答原生提问
@@ -1014,10 +1025,15 @@ export class Manager {
   async setApprovalPolicy(id: string, mode: string, revision: string, revoke = false) {
     const session = this.store.get(id);
     if (!session) throw Error('会话不存在');
+    const clearAuto =
+      session.agent === 'codex' &&
+      selectedApprovalPolicy(session) === 'auto-allow' &&
+      (revoke || mode === 'on-request');
     if (
-      this.active.has(id) ||
-      session.operation ||
-      ['running', 'waiting', 'detached'].includes(session.status)
+      !clearAuto &&
+      (this.active.has(id) ||
+        session.operation ||
+        ['running', 'waiting', 'detached'].includes(session.status))
     )
       throw Error('请先结束当前任务或审批，并从原生终端交回后再修改授权');
     if (managementRevision(session) !== revision) throw Error('会话状态已变化，请刷新审批设置');
@@ -1027,6 +1043,7 @@ export class Manager {
       if (mode === 'native' && session.agent !== 'codex') delete session.approvalPolicy;
       else session.approvalPolicy = mode;
     }
+    if (clearAuto) session.approvalPolicy = 'on-request';
     this.store.save(session);
     this.store.event(
       id,
@@ -1035,7 +1052,7 @@ export class Manager {
         ? '已清除本会话内的临时授权；后续按当前原生策略重新审批。'
         : '已修改本会话审批策略：' + mode + '；原临时授权已清除，仅影响此 session。',
     );
-    await this.agents[session.agent].release?.(id);
+    if (!this.active.has(id)) await this.agents[session.agent].release?.(id);
     this.controls.refresh(id);
     return this.approvalPolicyInfo(id);
   }
@@ -2572,8 +2589,26 @@ export class Manager {
     const interactionMessage = rootSession
       ? { ...message, id: randomUUID(), replyTo: undefined, route: rootSession.route }
       : message;
+    const canAuto = supportsAutoApproval(session.agent, request);
+    const automatic =
+      canAuto && selectedApprovalPolicy(this.store.get(session.id) ?? session) === 'auto-allow';
     const interaction: Interaction = {
       ...request,
+      ...(canAuto
+        ? {
+            approvalOptions: approvalOptions(request).flatMap((o) =>
+              o.id === 'allow'
+                ? [
+                    o,
+                    {
+                      ...autoApprovalChoice,
+                      description: `目标会话：${sessionName(session)} · ${session.id.slice(0, 8)}。${autoApprovalChoice.description}`,
+                    },
+                  ]
+                : [o],
+            ),
+          }
+        : {}),
       ...(request.kind === 'approval' && !request.approvalContext
         ? { approvalContext: approvalPolicyContext(session.agent, selectedApprovalPolicy(session)) }
         : {}),
@@ -2583,6 +2618,31 @@ export class Manager {
       createdAt: Date.now(),
       expiresAt: Date.now() + this.config.interactionTimeoutMs,
     };
+    if (automatic) {
+      interaction.approvalContext = approvalPolicyContext(session.agent, 'auto-allow');
+      this.store.event(session.id, 'interaction', JSON.stringify(interaction));
+      this.store.event(
+        session.id,
+        'decision',
+        JSON.stringify({
+          id: interaction.id,
+          answer: { allow: true, scope: 'auto' },
+          automatic: true,
+        }),
+      );
+      this.store.event(
+        session.id,
+        'interaction_closed',
+        JSON.stringify({
+          id: interaction.id,
+          kind: 'approval',
+          status: 'allowed',
+          scope: 'auto',
+          automatic: true,
+        }),
+      );
+      return Promise.resolve({ allow: true });
+    }
     if (request.mode !== 'async') {
       session.status = 'waiting';
       this.save(session);
@@ -2712,7 +2772,10 @@ export class Manager {
         }
         this.controls.refresh(session.id);
         if (error) reject(error);
-        else resolve(answer!);
+        else
+          resolve(
+            answer && 'allow' in answer && answer.scope === 'auto' ? { allow: true } : answer!,
+          );
       };
       const abort = () => finish(undefined, new Error('交互已取消'));
       const timer = setTimeout(
@@ -2785,8 +2848,43 @@ export class Manager {
     if (pending.request.expiresAt !== undefined && Date.now() >= pending.request.expiresAt)
       throw new Error('请求已过期，未自动批准。');
     validateAnswer(pending.request, answer);
+    const enableAuto = 'allow' in answer && answer.allow && answer.scope === 'auto';
+    if (enableAuto) {
+      const session = this.store.get(sessionId);
+      if (
+        !session ||
+        session.status === 'closed' ||
+        !supportsAutoApproval(session.agent, pending.request)
+      )
+        throw new Error('此请求不支持本会话自动允许');
+      session.approvalPolicy = 'auto-allow';
+      this.store.save(session);
+      this.store.event(
+        sessionId,
+        'system',
+        '用户已开启本会话自动允许命令及文件审批；仅当前 Session，可用 /tab approval on-request 恢复人工审批。',
+      );
+    }
     this.store.event(sessionId, 'decision', JSON.stringify({ id, answer }));
     pending.settle(answer);
+    if (enableAuto)
+      for (const other of [...this.pending.values()])
+        if (
+          other.request.sessionId === sessionId &&
+          supportsAutoApproval('codex', other.request) &&
+          (other.request.expiresAt ?? Infinity) > Date.now()
+        ) {
+          this.store.event(
+            sessionId,
+            'decision',
+            JSON.stringify({
+              id: other.request.id,
+              answer: { allow: true, scope: 'auto' },
+              automatic: true,
+            }),
+          );
+          other.settle({ allow: true, scope: 'auto' });
+        }
   }
   stop(sessionId: string): void {
     const active = this.active.get(sessionId);
@@ -2840,6 +2938,7 @@ export class Manager {
       delete latest.pendingAttachments;
       delete latest.pendingAttachmentRequest;
       delete latest.pendingInitialTask;
+      if (latest.approvalPolicy === 'auto-allow') latest.approvalPolicy = 'on-request';
       if (latest.status !== 'closed') latest.status = 'idle';
       this.store.save(latest);
       this.cancelAsyncQuestions(id);
@@ -3142,6 +3241,10 @@ export class Manager {
     if (session.status === 'closed') return;
     this.tasks.pauseSession(id);
     this.closedSessions.add(id);
+    if (session.approvalPolicy === 'auto-allow') {
+      session.approvalPolicy = 'on-request';
+      this.store.save(session);
+    }
     session.status = 'closed';
     this.save(session);
     this.cancelAsyncQuestions(id);
@@ -4431,7 +4534,7 @@ export class Manager {
       const info = this.approvalPolicyInfo(current.id);
       return this.sendManagement(
         message,
-        `本会话审批策略：${info.modes.find((m) => m.id === info.mode)?.label ?? info.mode}${info.defaulted && current.agent === 'codex' ? '（框架默认）' : ''}\n\n${info.modes.map((m) => `${m.label}（${m.id}）\n${m.description}`).join('\n\n')}\n\n策略决定何时询问，审批卡片决定本次或本会话内的原生授权范围；没有通用的“允许所有工具”按钮。仅影响当前 session；不修改共享原生配置或沙箱权限。关闭、重置、重启或清除授权后，临时授权失效。`,
+        `本会话审批策略：${info.modes.find((m) => m.id === info.mode)?.label ?? info.mode}${info.defaulted && current.agent === 'codex' ? '（框架默认）' : ''}\n\n${info.modes.map((m) => `${m.label}（${m.id}）\n${m.description}`).join('\n\n')}\n\n审批卡片可选择本次、原生授权范围或本会话自动允许命令与文件审批。自动允许不含提问和登录授权，可用 /tab approval on-request 恢复人工审批。仅影响当前 Session，不修改共享原生配置或沙箱权限；关闭、重置或清除授权后取消自动允许。`,
         current.id,
         'approval',
         [
@@ -4445,10 +4548,14 @@ export class Manager {
       );
     }
     if (action === 'approve') {
-      if (!args[0] || !['allow', 'session', 'deny', 'cancel'].includes(args[1] ?? ''))
-        throw new Error('用法: /tab approve <ID> allow|session|deny|cancel');
+      if (!args[0] || !['allow', 'session', 'auto', 'deny', 'cancel'].includes(args[1] ?? ''))
+        throw new Error('用法: /tab approve <ID> allow|session|auto|deny|cancel');
       this.answerFromSession(current.id, args[0], approvalAnswer(args[1] as ApprovalAction));
-      return reply('已提交本次决定。');
+      return reply(
+        args[1] === 'auto'
+          ? '已允许本次并开启本会话自动允许命令及文件审批；可用 /tab approval on-request 恢复人工审批。'
+          : '已提交本次决定。',
+      );
     }
     if (action === 'answer') {
       if (!args[0]) throw new Error('缺少请求 ID');

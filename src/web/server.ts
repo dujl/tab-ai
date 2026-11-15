@@ -39,7 +39,7 @@ const answerSchema = z.union([
   z
     .object({
       allow: z.boolean(),
-      scope: z.enum(['once', 'session']).optional(),
+      scope: z.enum(['once', 'session', 'auto']).optional(),
       cancel: z.boolean().optional(),
     })
     .strict(),

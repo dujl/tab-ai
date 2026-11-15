@@ -72,6 +72,7 @@ function interactionRecord(
           : 'ended_unknown';
   return {
     eventId: event.id,
+    automatic: decision ? JSON.parse(decision.text).automatic === true : false,
     kind: 'approval' as const,
     at: event.at,
     request,
@@ -113,7 +114,7 @@ export function interactionDetailsText(record: ReturnType<typeof interactionReco
   };
   const scope =
     request.kind === 'approval' && status === 'allowed'
-      ? `\n授权范围：${answer?.scope === 'session' ? '本会话内（以原生 Agent 实际授权范围为准）' : '仅本次'}`
+      ? `\n授权范围：${answer?.scope === 'auto' ? '本会话自动允许命令及文件审批' : answer?.scope === 'session' ? '本会话内（以原生 Agent 实际授权范围为准）' : '仅本次'}`
       : '';
   return `${request.title}\n请求 ID：${request.id}\n所属会话：${request.sessionId}\n状态：${labels[status] ?? '状态未确认'}${scope}\n创建时间：${new Date(record.at).toISOString()}${record.settledAt !== undefined ? `\n处理时间：${new Date(record.settledAt).toISOString()}` : ''}\n\n完整请求\n${request.detail}\n\n仅查看详情，不提交或重新执行审批。${status === 'allowed' ? '审批通过不代表工具已经执行成功，历史范围也不代表临时授权仍有效。' : ''}`;
 }
