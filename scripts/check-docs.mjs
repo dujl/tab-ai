@@ -51,6 +51,8 @@ function anchors(file) {
   );
 }
 const errors = [];
+for (const file of packageFiles ?? [])
+  if (file.startsWith('.github/')) errors.push(`${file}: 仓库配置不应包含在安装包中`);
 let links = 0;
 for (const file of files) {
   if (packageFiles && !packageFiles.has(relative(root, file).split('\\').join('/')))
