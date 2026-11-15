@@ -7,7 +7,7 @@ import { sameWorkspace } from '../core/session-workspace.js';
 import type { AgentUsage, CompactionResult, NativeLoop, Session } from '../core/types.js';
 import { codexInstructions } from '../core/channel-instructions.js';
 import { prepareCodexInstructions } from './codex-instructions.js';
-import { nativeApprovalPolicy } from '../core/approval-policy.js';
+import { nativeApprovalPolicy, nativeApprovalReviewer } from '../core/approval-policy.js';
 
 const goalSchema = z.object({
   threadId: z.string(),
@@ -70,7 +70,11 @@ export class CodexMaintenance {
       rpc.write({ method: 'initialized' });
       await prepareCodexInstructions(session, rpc);
       const result = z
-        .object({ thread: z.object({ id: z.string(), cwd: z.string().optional() }) })
+        .object({
+          thread: z.object({ id: z.string(), cwd: z.string().optional() }),
+          approvalPolicy: z.unknown().optional(),
+          approvalsReviewer: z.string().optional(),
+        })
         .parse(
           await rpc.request('thread/resume', {
             threadId: session.nativeId,
@@ -78,12 +82,20 @@ export class CodexMaintenance {
             ...(nativeApprovalPolicy(session)
               ? { approvalPolicy: nativeApprovalPolicy(session) }
               : {}),
+            ...(nativeApprovalReviewer(session)
+              ? { approvalsReviewer: nativeApprovalReviewer(session) }
+              : {}),
             ...(session.settings ? { model: session.settings.model } : {}),
             ...(codexInstructions(session)
               ? { developerInstructions: codexInstructions(session) }
               : {}),
           }),
         );
+      if (
+        nativeApprovalReviewer(session) === 'auto_review' &&
+        (result.approvalsReviewer !== 'auto_review' || result.approvalPolicy !== 'on-request')
+      )
+        throw new Error('Codex 未确认本会话自动审查模式；未执行管理操作。');
       if (
         result.thread.id !== session.nativeId ||
         (result.thread.cwd && !sameWorkspace(result.thread.cwd, session.workspace))

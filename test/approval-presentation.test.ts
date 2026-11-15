@@ -106,6 +106,37 @@ test('nested shell Python script gets deterministic interpreter and URL facts, n
   );
 });
 
+test('test command labels skip environment assignments without changing the request or treating compound scripts as tests', () => {
+  const command =
+    "/bin/zsh -lc 'UV_CACHE_DIR=.uv-cache uv run --no-sync pytest -q --junitxml=artifacts/tests/full.xml'";
+  const result = approvalPresentation({ command, cwd: '/work' }, '/work', true);
+  assert.equal(result.approvalSummary!.operation, '运行 pytest 测试');
+  assert.equal(
+    result.approvalSummary!.facts.find((f) => f.label === '执行器')!.value,
+    'zsh → uv → pytest',
+  );
+  assert.equal(result.approvalSections![0]!.value, command);
+  assert.equal(
+    approvalPresentation({ command: 'PYTHONUTF8=1 .venv/bin/python -m pytest -q' }, '/work')
+      .approvalSummary!.operation,
+    '运行 pytest 测试',
+  );
+  for (const command of [
+    'UV_CACHE_DIR=.uv-cache uv run --no-sync pytest && rm -rf /data',
+    'UV_CACHE_DIR=$(touch /tmp/marker) uv run --no-sync pytest',
+  ]) {
+    const summary = approvalPresentation({ command }, '/work').approvalSummary!;
+    assert.equal(summary.operation, '执行复合命令或脚本');
+    assert.match(summary.caution!, /包含 shell 语法/);
+  }
+  assert.notEqual(
+    approvalPresentation({ command: 'uv run --unknown pytest' }, '/work').approvalSummary!
+      .operation,
+    '运行 pytest 测试',
+  );
+  assert.doesNotMatch(JSON.stringify(result.approvalSummary), /安全|自动批准|只读/);
+});
+
 test('Claude file and OpenCode native permission details retain scopes without guessing commands from glob patterns', () => {
   const file = approvalPresentation(
     { file_path: '/work/x.txt', old_string: 'a', new_string: 'b' },

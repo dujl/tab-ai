@@ -16,11 +16,15 @@ Dashboard 对话工具栏也直接提供 **审批策略**；飞书首页的 **�
 
 策略与选项说明随 `interaction` 事件保存；飞书卡片、企微卡片、文字命令和网页都展示授权范围。网页不依赖鼠标悬停才能阅读选项说明，移动端也可直接看到。审批卡片不是修改策略的入口，调整策略仍需先结束当前轮。
 
-| Agent       | 本会话策略                            | 单次审批                                                                            |
-| ----------- | ------------------------------------- | ----------------------------------------------------------------------------------- |
-| Codex       | native、untrusted、on-request、never  | 根据 `availableDecisions` 提供 accept、acceptForSession、decline、cancel 的对应选项 |
-| Claude Code | native、default、acceptEdits、dontAsk | 本次允许；原生提供完整可支持的 allow 规则建议时提供本会话允许；拒绝/取消            |
-| OpenCode    | 沿用原生配置                          | 本次允许、相同请求范围在本会话允许、拒绝                                            |
+需要减少开发测试中的人工确认时，可在当前会话选择 **按需审批 · 原生自动审查**（`/tab approval on-request-auto-review`）。框架对该 Session 传入 `approvalPolicy: on-request` 和 `approvalsReviewer: auto_review`；普通沙箱内操作继续执行，额外权限请求由 Codex 根据风险和用户授权审查，并可能拒绝。自动审查可能增加模型用量。原生未确认此模式时不启动工作，不能静默降级为其他策略。切回普通按需审批会显式恢复 `user` 审查者；选择原生配置时不传覆盖参数。此选项不修改全局配置，不影响其他会话，也不会因命令包含 `pytest` 就批准整个脚本。
+
+本机 HTTP 端口测试即使文件位于可写工作区内，也可能受原生网络沙箱限制。`UV_CACHE_DIR` 等环境变量赋值与测试执行器在审批摘要中分开识别；摘要不改变原始命令、授权范围或原生决定。相关边界见 [OpenAI 官方审批说明](https://learn.chatgpt.com/docs/agent-approvals-security)。
+
+| Agent       | 本会话策略                                                   | 单次审批                                                                            |
+| ----------- | ------------------------------------------------------------ | ----------------------------------------------------------------------------------- |
+| Codex       | native、untrusted、on-request、on-request-auto-review、never | 根据 `availableDecisions` 提供 accept、acceptForSession、decline、cancel 的对应选项 |
+| Claude Code | native、default、acceptEdits、dontAsk                        | 本次允许；原生提供完整可支持的 allow 规则建议时提供本会话允许；拒绝/取消            |
+| OpenCode    | 沿用原生配置                                                 | 本次允许、相同请求范围在本会话允许、拒绝                                            |
 
 `never/dontAsk` 表示不弹审批、权限不足时不批准，不等于全权限。`untrusted` 仍由 Codex 判断可信命令，不把它标作“所有工具每次必问”。不支持的策略或选项明确拒绝。保持 `native` 时不添加覆盖参数。
 

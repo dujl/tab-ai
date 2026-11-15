@@ -110,10 +110,28 @@ function commandSummary(command: string): {
     shells.push(exe);
     parsed = words(parsed.argv[2]!);
   }
+  // Shell environment assignments precede the executable; they are not commands.
+  // This only improves the label and never changes the native approval payload.
+  while (/^[A-Za-z_][A-Za-z0-9_]*=/.test(parsed.argv[0] ?? '')) parsed.argv.shift();
   const exe = parsed.argv[0]?.split('/').at(-1) ?? '';
+  let testRunner: string | undefined;
+  if (!parsed.complex && exe === 'uv' && parsed.argv[1] === 'run') {
+    const flags = new Set(['--no-sync', '--offline', '--frozen', '--locked', '--no-project']);
+    let index = 2;
+    while (flags.has(parsed.argv[index] ?? '')) index++;
+    if (parsed.argv[index]?.split('/').at(-1) === 'pytest') testRunner = 'pytest';
+  }
+  if (!parsed.complex && /^python(?:\d(?:\.\d+)?)?$/.test(exe)) {
+    if (parsed.argv[1] === '-m' && parsed.argv[2] === 'pytest') testRunner = 'pytest';
+  }
   const executors = [...shells, /^[\w.+-]+$/.test(exe) ? compact(exe, 60) : '未识别执行器'].join(
     ' → ',
   );
+  if (!parsed.complex && (testRunner || exe === 'pytest'))
+    return {
+      operation: '运行 pytest 测试',
+      executors: testRunner ? `${executors} → ${testRunner}` : executors,
+    };
   const inline =
     /^(?:python(?:\d(?:\.\d+)?)?|node|ruby|perl)$/.test(exe) &&
     parsed.argv.some((arg) => arg === '-c' || arg === '-e');

@@ -56,6 +56,13 @@ createInterface({ input: process.stdin }).on('line', (line) => {
       result: {
         thread: { id, cwd: process.cwd() },
         approvalPolicy: m.params.approvalPolicy ?? 'on-request',
+        ...(m.params.approvalsReviewer && !existsSync(join(process.cwd(), 'omit-reviewer'))
+          ? {
+              approvalsReviewer: existsSync(join(process.cwd(), 'reported-reviewer'))
+                ? readFileSync(join(process.cwd(), 'reported-reviewer'), 'utf8')
+                : m.params.approvalsReviewer,
+            }
+          : {}),
       },
     });
   } else if (m.method === 'turn/start') {

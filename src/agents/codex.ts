@@ -6,6 +6,7 @@ import { approvalChoices, approvalAction } from '../core/approval-decisions.js';
 import {
   approvalPolicyContext,
   nativeApprovalPolicy,
+  nativeApprovalReviewer,
   selectedApprovalPolicy,
 } from '../core/approval-policy.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -30,6 +31,7 @@ import { prepareCodexInstructions } from './codex-instructions.js';
 const threadResult = z.object({
   thread: z.object({ id: z.string(), cwd: z.string().optional() }),
   approvalPolicy: z.unknown().optional(),
+  approvalsReviewer: z.string().optional(),
 });
 const itemEvent = z.object({
   item: z.object({ type: z.string(), text: z.string().optional() }).passthrough(),
@@ -164,6 +166,9 @@ export class CodexAdapter implements AgentAdapter {
       '--cd',
       session.workspace,
       ...(policy ? ['-c', `approval_policy=${JSON.stringify(policy)}`] : []),
+      ...(nativeApprovalReviewer(session)
+        ? ['-c', `approvals_reviewer=${JSON.stringify(nativeApprovalReviewer(session))}`]
+        : []),
       ...(session.settings ? ['--model', session.settings.model] : []),
       ...(codexInstructions(session)
         ? ['-c', `developer_instructions=${JSON.stringify(codexInstructions(session))}`]
@@ -446,13 +451,29 @@ export class CodexAdapter implements AgentAdapter {
               ...(nativeApprovalPolicy(session)
                 ? { approvalPolicy: nativeApprovalPolicy(session) }
                 : {}),
+              ...(nativeApprovalReviewer(session)
+                ? { approvalsReviewer: nativeApprovalReviewer(session) }
+                : {}),
               ...(session.settings ? { model: session.settings.model } : {}),
               ...(codexInstructions(session)
                 ? { developerInstructions: codexInstructions(session) }
                 : {}),
             }),
           );
-      if (result.approvalPolicy !== undefined)
+      if (!prior && nativeApprovalReviewer(session) === 'auto_review') {
+        if (result.approvalsReviewer !== 'auto_review' || result.approvalPolicy !== 'on-request')
+          throw new Error(
+            'Codex 未确认本会话自动审查模式；未启动任务，请升级原生版本或选择其他审批模式。',
+          );
+        approvalContext = approvalPolicyContext('codex', selectedApprovalPolicy(session), true);
+      } else if (!prior && result.approvalsReviewer === 'auto_review') {
+        if (nativeApprovalReviewer(session) === 'user')
+          throw new Error('Codex 未恢复人工审批模式；未启动任务，请检查原生审批配置。');
+        approvalContext = {
+          label: '原生自动审查',
+          description: '原生当前使用自动审查者；额外权限请求由 Codex 按风险和用户授权判断。',
+        };
+      } else if (result.approvalPolicy !== undefined)
         approvalContext = approvalPolicyContext('codex', result.approvalPolicy, true);
       if (
         (session.nativeId && result.thread.id !== session.nativeId) ||

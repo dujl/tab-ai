@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { copyFileSync, chmodSync, readFileSync } from 'node:fs';
+import { copyFileSync, chmodSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   approvalPolicyContext,
@@ -521,6 +521,74 @@ test('Codex default on-request is passed on start, resume and terminal handoff; 
     for (const r of requests) assert.equal(r.params.sandbox, undefined);
     assert.equal(nativeApprovalPolicy({ agent: 'claude' }), undefined);
     assert.equal(nativeApprovalPolicy({ agent: 'opencode' }), undefined);
+  } finally {
+    await adapter.close();
+    await f.cleanup();
+  }
+});
+
+test('Codex auto-review is selected per session, confirmed before work and explicitly restored to user review', async () => {
+  const f = fixture(),
+    command = join(f.dir, 'codex-scopes.mjs');
+  copyFileSync(new URL('./fixtures/fake-codex-scopes.mjs', import.meta.url), command);
+  chmodSync(command, 0o755);
+  const adapter = new CodexAdapter(command);
+  try {
+    const s = f.store.create(incoming('').route, 'codex', f.dir),
+      other = f.store.create({ ...incoming('').route, thread: 'other' }, 'codex', f.dir);
+    const info = f.manager.approvalPolicyInfo(s.id);
+    assert.ok(info.modes.some((m) => m.id === 'on-request-auto-review'));
+    await f.manager.setApprovalPolicy(s.id, 'on-request-auto-review', info.revision);
+    Object.assign(s, f.store.get(s.id));
+    assert.equal(other.approvalPolicy, undefined);
+    const run = (session = s) =>
+      adapter.run({
+        session,
+        text: 'recall',
+        signal: new AbortController().signal,
+        hooks: {
+          nativeId: (id) => {
+            session.nativeId = id;
+          },
+          text() {},
+          activity() {},
+          ask: async () => {
+            throw Error('Unexpected manual approval');
+          },
+        },
+      });
+    await run();
+    const nativeId = s.nativeId;
+    assert.ok(adapter.resumeCommand(s).includes('approvals_reviewer="auto_review"'));
+    await run(other);
+    s.approvalPolicy = 'on-request';
+    await run();
+    assert.equal(s.nativeId, nativeId);
+    const trace = () =>
+      readFileSync(join(f.dir, 'scope-trace.jsonl'), 'utf8')
+        .trim()
+        .split('\n')
+        .map((x) => JSON.parse(x));
+    const starts = trace().filter((x) => ['thread/start', 'thread/resume'].includes(x.method));
+    assert.deepEqual(
+      starts.map((x) => x.params.approvalsReviewer),
+      ['auto_review', 'user', 'user'],
+    );
+    assert.ok(
+      starts.every(
+        (x) => x.params.approvalPolicy === 'on-request' && x.params.sandbox === undefined,
+      ),
+    );
+    s.approvalPolicy = 'on-request-auto-review';
+    writeFileSync(join(f.dir, 'omit-reviewer'), '');
+    const before = trace().filter((x) => x.method === 'turn/start').length;
+    await assert.rejects(run(), /未确认本会话自动审查/);
+    assert.equal(trace().filter((x) => x.method === 'turn/start').length, before);
+    unlinkSync(join(f.dir, 'omit-reviewer'));
+    writeFileSync(join(f.dir, 'reported-reviewer'), 'auto_review');
+    s.approvalPolicy = 'on-request';
+    await assert.rejects(run(), /未恢复人工审批/);
+    assert.equal(trace().filter((x) => x.method === 'turn/start').length, before);
   } finally {
     await adapter.close();
     await f.cleanup();
