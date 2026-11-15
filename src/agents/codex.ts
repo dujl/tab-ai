@@ -605,13 +605,15 @@ export class CodexAdapter implements AgentAdapter {
       };
       const choices = approvalChoices(true, true).filter(
         (c) =>
-          !params.availableDecisions || params.availableDecisions.includes(nativeActions[c.id]),
+          c.id !== 'auto' &&
+          (!params.availableDecisions || params.availableDecisions.includes(nativeActions[c.id])),
       );
       const active = [...this.live.values()].find((v) => v.rpc === rpc);
       if (params.turnId && (!active?.turnId || params.turnId !== active.turnId))
         throw Error('审批请求不属于当前原生轮次');
       const request = {
         kind: 'approval' as const,
+        approvalAutomation: 'codex-command-file' as const,
         title: method.includes('commandExecution') ? 'Codex 请求执行命令' : 'Codex 请求修改文件',
         ...approvalPresentation(
           message.params,
@@ -624,7 +626,8 @@ export class CodexAdapter implements AgentAdapter {
       };
       const answer = await hooks.ask(request, signal),
         action = approvalAction(answer);
-      if (!choices.some((c) => c.id === action)) throw Error('原生请求不支持此审批范围');
+      if (action === 'auto' || !choices.some((c) => c.id === action))
+        throw Error('原生请求不支持此审批范围');
       if (action === 'session') onSessionApproval?.();
       result = {
         decision: {

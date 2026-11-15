@@ -65,9 +65,11 @@ export function wecomCard(prompt: CardPrompt): TemplateCard {
           : []),
         {
           keyname: '授权范围',
-          value: approvalOptions(prompt.request).some((o) => o.id === 'session')
-            ? '允许本次；或本会话内按原生范围复用，并非所有工具。'
-            : '本次未提供会话内授权，不能扩大为允许所有。',
+          value: approvalOptions(prompt.request).some((o) => o.id === 'auto')
+            ? '可开启本会话自动允许：本次及后续命令、文件审批不再逐次询问；不含提问和登录授权。'
+            : approvalOptions(prompt.request).some((o) => o.id === 'session')
+              ? '允许本次；或本会话内按原生范围复用，并非所有工具。'
+              : '本次未提供会话内授权，不能扩大为允许所有。',
         },
         { keyname: '审批', value: approvalReference(prompt) },
       ],
@@ -78,7 +80,7 @@ export function wecomCard(prompt: CardPrompt): TemplateCard {
                 text: o.label,
                 key: o.id,
                 style:
-                  o.id === 'allow' || o.id === 'session'
+                  o.id === 'allow' || o.id === 'session' || o.id === 'auto'
                     ? (1 as const)
                     : o.id === 'deny'
                       ? (2 as const)
@@ -117,7 +119,7 @@ export function wecomCard(prompt: CardPrompt): TemplateCard {
 }
 const detail = z.object({
   task_id: z.string().uuid(),
-  event_key: z.enum(['allow', 'session', 'deny', 'cancel', 'submit', 'details']),
+  event_key: z.enum(['allow', 'session', 'auto', 'deny', 'cancel', 'submit', 'details']),
   selected_items: z
     .object({
       selected_item: z.array(

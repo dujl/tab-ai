@@ -296,7 +296,9 @@ export class OpenCodeAdapter implements AgentAdapter {
             },
             combined,
           );
-          action = approvalAction(answer);
+          const selected = approvalAction(answer);
+          if (selected === 'auto') throw Error('此原生适配器不支持自动允许');
+          action = selected;
           if (action === 'cancel') throw Error('此原生请求不支持取消选项');
           if (action === 'session') this.grants.add(session, range);
         }

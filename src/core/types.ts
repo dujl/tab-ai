@@ -128,6 +128,8 @@ export interface Interaction {
   id: string;
   sessionId: string;
   kind: 'approval' | 'question';
+  // Set only by the trusted adapter for native command/file approval callbacks.
+  approvalAutomation?: 'codex-command-file';
   title: string;
   detail: string;
   approvalOptions?: {
@@ -152,7 +154,7 @@ export interface InteractionDelivery {
   close(status: string): Promise<void>;
 }
 export type Answer =
-  | { allow: boolean; scope?: 'once' | 'session'; cancel?: boolean }
+  | { allow: boolean; scope?: 'once' | 'session' | 'auto'; cancel?: boolean }
   | { answers: Record<string, string[]>; action?: 'accept' | 'decline' | 'cancel' };
 export interface ToolActivity {
   id: string;

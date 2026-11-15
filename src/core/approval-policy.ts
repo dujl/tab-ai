@@ -1,4 +1,17 @@
-import type { AgentKind, Session } from './types.js';
+import type { AgentKind, Interaction, Session } from './types.js';
+import { approvalOptions } from './approval-decisions.js';
+
+export function supportsAutoApproval(
+  agent: AgentKind,
+  request: Pick<Interaction, 'kind' | 'approvalAutomation' | 'approvalOptions'>,
+) {
+  return (
+    agent === 'codex' &&
+    request.kind === 'approval' &&
+    request.approvalAutomation === 'codex-command-file' &&
+    approvalOptions(request).some((o) => o.id === 'allow')
+  );
+}
 
 // An explicit `native` opts out of the framework default for this session.
 export function selectedApprovalPolicy(session: Pick<Session, 'agent' | 'approvalPolicy'>): string {
@@ -8,7 +21,8 @@ export function nativeApprovalPolicy(
   session: Pick<Session, 'agent' | 'approvalPolicy'>,
 ): string | undefined {
   const mode = selectedApprovalPolicy(session);
-  if (session.agent === 'codex' && mode === 'on-request-auto-review') return 'on-request';
+  if (session.agent === 'codex' && ['on-request-auto-review', 'auto-allow'].includes(mode))
+    return 'on-request';
   return mode === 'native' ? undefined : mode;
 }
 export function nativeApprovalReviewer(session: Pick<Session, 'agent' | 'approvalPolicy'>) {
@@ -42,6 +56,12 @@ export function approvalModes(agent: AgentKind) {
         label: '按需审批 · 原生自动审查',
         description:
           '本会话的额外权限申请由 Codex 原生自动审查，按风险与用户授权批准或拒绝，减少人工确认；不是全部允许。可能增加模型用量，需原生版本支持。',
+      },
+      {
+        id: 'auto-allow',
+        label: '本会话自动允许',
+        description:
+          '框架自动允许本 Session 的命令和文件审批，不再逐次询问；不自动回答问题或确认登录授权。保留原生沙箱和组织限制，不影响其他会话；关闭、重置或清除授权后取消。',
       },
       {
         id: 'never',
@@ -82,7 +102,12 @@ export function approvalPolicyContext(
   if (mode)
     return {
       label: mode.label,
-      description: (reported ? '原生当前生效策略。' : '本会话设置。') + mode.description,
+      description:
+        (mode.id === 'auto-allow'
+          ? '本会话框架策略。'
+          : reported
+            ? '原生当前生效策略。'
+            : '本会话设置。') + mode.description,
     };
   if (agent === 'codex' && policy && typeof policy === 'object' && 'granular' in policy) {
     const granular = (policy as { granular: unknown }).granular;

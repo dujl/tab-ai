@@ -88,9 +88,9 @@ API 与 Dashboard 使用同一服务，默认 `http://127.0.0.1:4317`。请求�
 
 ## 审批与提问
 
-`POST /api/sessions/:id/answer` 接受 `{id,answer}`。审批答案为 `{allow:boolean,scope?:"once"|"session",cancel?:boolean}`，只允许请求实际提供的决定；问题答案为 `{answers:{问题ID:[答案]}}`。MCP 表单可附 action 为 accept/decline/cancel，拒绝或取消时答案为空，按原 schema 还原类型。无效答案不结算原请求。
+`POST /api/sessions/:id/answer` 接受 `{id,answer}`。审批答案为 `{allow:boolean,scope?:"once"|"session"|"auto",cancel?:boolean}`，只允许请求实际提供的决定；问题答案为 `{answers:{问题ID:[答案]}}`。MCP 表单可附 action 为 accept/decline/cancel，拒绝或取消时答案为空，按原 schema 还原类型。无效答案不结算原请求。
 
-`GET /api/sessions/:id/approval-policy` 返回 mode/defaulted/modes/revision/canRevoke；POST `{mode,revision,revoke?}` 保存本会话策略或撤销临时授权。Codex 未覆盖时默认 on-request，native 是明确选择；不修改沙箱或共享原生配置。运行、待审批、终端占用或版本过时拒绝。详见 [审批策略](session-approvals.md)、[MCP 交互](mcp-elicitation.md)。
+`GET /api/sessions/:id/approval-policy` 返回 mode/defaulted/modes/revision/canRevoke；POST `{mode,revision,revoke?}` 保存本会话策略或撤销临时授权。Codex 未覆盖时默认 on-request，native 是明确选择；不修改沙箱或共享原生配置。运行、待审批或终端占用时，除取消本会话自动允许外拒绝修改；版本过时一律拒绝。详见 [审批策略](session-approvals.md)、[MCP 交互](mcp-elicitation.md)。
 
 ## 记录、待办与交付
 

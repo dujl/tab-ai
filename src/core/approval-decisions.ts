@@ -1,5 +1,11 @@
 import type { Answer, Interaction } from './types.js';
-export type ApprovalAction = 'allow' | 'session' | 'deny' | 'cancel';
+export type ApprovalAction = 'allow' | 'session' | 'auto' | 'deny' | 'cancel';
+export const autoApprovalChoice = {
+  id: 'auto' as const,
+  label: '本会话自动允许',
+  description:
+    '允许本次及本 Session 后续命令、文件操作审批，不再逐次询问；不含提问或登录授权，不影响其他会话。可恢复人工审批，关闭或重置后取消。',
+};
 export const approvalChoices = (
   session = false,
   cancel = false,
@@ -32,18 +38,22 @@ export function approvalOptions(request: Pick<Interaction, 'approvalOptions'>) {
 export function approvalAnswer(action: ApprovalAction): Answer {
   return action === 'allow'
     ? { allow: true }
-    : action === 'session'
-      ? { allow: true, scope: 'session' }
-      : action === 'cancel'
-        ? { allow: false, cancel: true }
-        : { allow: false };
+    : action === 'auto'
+      ? { allow: true, scope: 'auto' }
+      : action === 'session'
+        ? { allow: true, scope: 'session' }
+        : action === 'cancel'
+          ? { allow: false, cancel: true }
+          : { allow: false };
 }
 export function approvalAction(answer: Answer): ApprovalAction {
   if (!('allow' in answer)) throw Error('此请求需要审批决定');
   return answer.allow
-    ? answer.scope === 'session'
-      ? 'session'
-      : 'allow'
+    ? answer.scope === 'auto'
+      ? 'auto'
+      : answer.scope === 'session'
+        ? 'session'
+        : 'allow'
     : answer.cancel
       ? 'cancel'
       : 'deny';
@@ -52,6 +62,7 @@ export function approvalDecisionText(answer: Answer) {
   const action = approvalAction(answer);
   return {
     allow: '已允许本次操作',
+    auto: '已允许本次，并开启本会话自动允许',
     session: '已允许本会话内的原生授权范围',
     deny: '已拒绝本次操作',
     cancel: '已取消当前请求，未批准',
