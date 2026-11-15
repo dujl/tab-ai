@@ -10,6 +10,7 @@ import {
   type CardRegistry,
 } from './cards.js';
 import { interactionAppearance } from './lark-card-status.js';
+import { projectLink } from './lark-menu-layout.js';
 
 const plain = (content: string) => ({ tag: 'plain_text', content });
 export function larkCard(prompt: CardPrompt) {
@@ -110,6 +111,7 @@ export function larkCard(prompt: CardPrompt) {
         plain('此卡片仅表示审批已允许，不代表工具已执行成功；实际结果请查看工具执行卡片。'),
       ],
     });
+  elements.push(projectLink('1.0'));
   return {
     config: { wide_screen_mode: true, update_multi: true, enable_forward: false },
     header: {

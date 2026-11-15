@@ -1,4 +1,4 @@
-import { PROJECT_URL } from '../brand.js';
+import { BRAND, PROJECT_URL } from '../brand.js';
 import type { SessionInformation } from '../core/types.js';
 export type CardElement = Record<string, any>;
 export const plain = (content: string) => ({ tag: 'plain_text', content });
@@ -76,8 +76,11 @@ export function informationElements(info: SessionInformation): CardElement[] {
     },
   ];
 }
-export function projectLink(): CardElement {
-  return { tag: 'markdown', content: `[tab-ai ↗](${PROJECT_URL})` };
+export function projectLink(schema: '1.0' | '2.0' = '2.0'): CardElement {
+  const content = `[${BRAND} ↗](${PROJECT_URL})`;
+  return schema === '1.0'
+    ? { tag: 'div', text: { tag: 'lark_md', content } }
+    : { tag: 'markdown', content };
 }
 // Native initialization/settings still use the same callback contract. Translate
 // layout syntax centrally, so those panels and management menus share Card 2.0.

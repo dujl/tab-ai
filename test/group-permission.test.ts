@@ -236,5 +236,6 @@ test('failed checks remain unknown, saved mode remains intact, and denied actors
 
 test('new Lark app registration requests group-wide messages from the start and keeps default group mode unchanged', () => {
   assert.ok(LARK_SCOPES.includes('im:message.group_msg'));
+  assert.ok(LARK_SCOPES.includes('im:message.reactions:write_only'));
   assert.ok(GUIDES.lark.steps.some((s) => s.includes('群模式仍默认仅 @')));
 });
