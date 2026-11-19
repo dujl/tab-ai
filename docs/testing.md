@@ -49,7 +49,7 @@ npx tsx --test --test-concurrency=4 test/tasks.test.ts test/dual-entry.test.ts
 
 ## 持续集成
 
-[CI 配置](../.github/workflows/ci.yml) 对 push、pull request 和手动运行执行安装、完整 verify（含安装包文档检查），目标为 Linux/macOS、Node 22.16.0/24。工作流仅有仓库读取权限，第三方 Action 固定到提交 SHA；不提供真实 Bot/模型密钥，不自动部署或发布 npm 包。
+[CI 配置](https://github.com/dujl/tab-ai/blob/main/.github/workflows/ci.yml) 对 push、pull request 和手动运行执行安装、完整 verify（含安装包文档检查），目标为 Linux/macOS、Node 22.16.0/24。工作流仅有仓库读取权限，第三方 Action 固定到提交 SHA；不提供真实 Bot/模型密钥，不自动部署或发布 npm 包。
 
 本地验证不等于 GitHub 工作流已经成功；首次推送后应检查各矩阵任务。工作流命令参考 [GitHub 的 Node.js 构建测试指南](https://docs.github.com/en/actions/tutorials/build-and-test-code/nodejs)。
 

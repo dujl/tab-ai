@@ -21,7 +21,6 @@
     "README.md",
     "LICENSE",
     "docs",
-    ".github/workflows/ci.yml",
     "CONTRIBUTING.md",
     "SECURITY.md"
   ],
