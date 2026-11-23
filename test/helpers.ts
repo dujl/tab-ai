@@ -80,7 +80,12 @@ export function fixture(
     defaultAgent: 'codex',
     defaultWorkspace: 'default',
     workspaces: { default: dir },
-    agents: { codex: { command: 'codex' }, claude: {}, opencode: { command: 'opencode' } },
+    agents: {
+      codex: { command: 'codex' },
+      claude: {},
+      opencode: { command: 'opencode' },
+      traecli: { command: 'traecli' },
+    },
     maxConcurrentRuns: 2,
     turnTimeoutMs: 5000,
     interactionTimeoutMs: 1000,
@@ -102,7 +107,7 @@ export function fixture(
   const manager = new Manager(
     config,
     store,
-    { codex: agent, claude: agent, opencode: agent },
+    { codex: agent, claude: agent, opencode: agent, traecli: agent },
     new Map([[channel.id, channel]]),
     router,
   );

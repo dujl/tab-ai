@@ -4,7 +4,7 @@ Dashboard 的「Agent 待办」展示当前 Session 内原生 Agent 的执行步
 
 ## 按能力展示
 
-- Codex：接入 `turn/plan/updated`，校验当前 thread 和 turn 后接收计划快照。
+- Codex/TRAE CLI：接入 `turn/plan/updated`，校验当前 thread 和 turn 后接收计划快照。
 - Claude Code：根据原生初始化消息中的实际工具列表判断能力。支持 `TaskCreate`、`TaskUpdate`、`TaskGet`、`TaskList` 和 `TodoWrite`；只在原生工具成功后应用状态。部分模型默认没有这些工具，因此入口隐藏，不强行开启工具或修改模型权限。工具实际出现时也可确认能力。
 - OpenCode：接入当前原生 session 的 `todo.updated`，同时处理成功完成的 `todowrite` 工具调用，包括清空列表；其他原生子 agent 和会话的列表不会覆盖当前 Session。
 - 未实现待办适配的后端隐藏入口。支持但尚未生成列表的会话显示明确的空状态。

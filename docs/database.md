@@ -50,4 +50,4 @@ Session 写入及对应任务同步、任务结果/队列变化使用同一 SQLi
 
 `events.type=usage` 保存归一化 JSON、原生会话 ID 和事件时间，作为历史记录；`sessions.data.tokenUsage` 保存当前原生会话的最新快照（nativeId、at、value）。同一次原生累计快照按覆盖处理，不相加；缓存读取包含在输入中、reasoning 包含在输出中，避免重复统计。不同 Agent 的累计范围通过 totalScope 区分；缺失不当作零。
 
-`events.type=compaction` 可附本次操作 tokens.nativeId/before/after；`sessions.data.lastCompactionTokens` 保存最近已确认压缩的对比，`contextUsageInvalidated` 标识压缩后或中止后旧占用已失效。读取时校验当前 Agent/nativeId；重置不继承这些快照。统计使用 JSON 字段保存；没有可靠原生 ID 的 usage 事件不能作为当前样本；Codex 可按 nativeId 只读补查原生历史，作为展示覆盖层，不回填会话或改变更新时间，确实缺失时才等待新上报。
+`events.type=compaction` 可附本次操作 tokens.nativeId/before/after；`sessions.data.lastCompactionTokens` 保存最近已确认压缩的对比，`contextUsageInvalidated` 标识压缩后或中止后旧占用已失效。读取时校验当前 Agent/nativeId；重置不继承这些快照。统计使用 JSON 字段保存；没有可靠原生 ID 的 usage 事件不能作为当前样本；Codex 和 TRAE CLI 可按当前 Agent/nativeId 只读补查各自原生历史，作为展示覆盖层，不回填会话或改变更新时间，确实缺失时才等待新上报。各自目录及读取边界见 [原生历史统计读取](management-cards.md#原生历史统计读取)。

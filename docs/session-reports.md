@@ -27,7 +27,7 @@
 
 总结器读取最近最多 200 条公开记录，总文本预算 48,000 字符；工具只保留名称、状态和退出码，不采集完整工具参数或私有推理。截断会在报告中说明。可引用的经验依据限于已提供的 event ID 和真实存在的 task-result。结构校验不等于事实审计；接续 Agent 仍需核对实际文件、接口与验收标准。
 
-执行 Agent 可在 `task_report` 的可选 `handoff` 中直接提交上述结构化信息；否则使用独立、无工具权限的原生总结轮。Codex 使用新建 ephemeral thread、read-only sandbox、关闭 MCP/工具并限制 JSON 输出；不恢复用户工作 thread。Claude 使用无工具、非持久化结构化查询。实现使用的原生协议见 [App Server 官方说明](https://learn.chatgpt.com/docs/app-server)。
+执行 Agent 可在 `task_report` 的可选 `handoff` 中直接提交上述结构化信息；否则使用独立、无工具权限的原生总结轮。Codex 和 TRAE CLI 分别使用新建 ephemeral app-server thread、read-only sandbox、关闭 MCP/工具并限制 JSON 输出；不恢复用户工作 thread，也不混用两个提供方的原生 ID 或进程。Claude 使用无工具、非持久化结构化查询。Codex 原生协议见 [App Server 官方说明](https://learn.chatgpt.com/docs/app-server)。
 
 总结服务不可用时仍保留已有成果和最后公开回复，标记为“已记录事实”并展示明确提示；不会推断额外经验或虚构验证通过。可稍后重新总结。报告请求先落库，运行中断后沿用原 ID / 版本恢复。
 

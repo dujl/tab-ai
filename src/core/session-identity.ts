@@ -18,7 +18,7 @@ export function sessionIdentity(session: Session): string {
   if (session.nativeId) {
     const settings = session.settings;
     const options = settings
-      ? ` --model ${shellArg(settings.model)}${settings.effort && session.agent !== 'opencode' ? (session.agent === 'codex' ? ` -c ${shellArg(`model_reasoning_effort=${JSON.stringify(settings.effort)}`)}` : ` --effort ${shellArg(settings.effort)}`) : ''}`
+      ? ` --model ${shellArg(settings.model)}${session.agent === 'traecli' && settings.provider ? ` -c ${shellArg(`model_provider=${JSON.stringify(settings.provider)}`)}` : ''}${settings.effort && session.agent !== 'opencode' ? (session.agent === 'codex' || session.agent === 'traecli' ? ` -c ${shellArg(`model_reasoning_effort=${JSON.stringify(settings.effort)}`)}` : ` --effort ${shellArg(settings.effort)}`) : ''}`
       : '';
     if (agentInstructions(session))
       lines.push(
@@ -28,7 +28,7 @@ export function sessionIdentity(session: Session): string {
       );
     else
       lines.push(
-        `本机原生恢复：${session.agent === 'codex' ? 'codex resume' : session.agent === 'claude' ? 'claude --resume' : 'opencode --session'} ${shellArg(session.nativeId)}${session.agent === 'codex' ? ` --cd ${shellArg(session.workspace)}` : ''}${options}`,
+        `本机原生恢复：${session.agent === 'codex' || session.agent === 'traecli' ? `${session.agent} resume` : session.agent === 'claude' ? 'claude --resume' : 'opencode --session'} ${shellArg(session.nativeId)}${session.agent === 'codex' || session.agent === 'traecli' ? ` --cd ${shellArg(session.workspace)}` : ''}${options}`,
       );
     if (session.agent === 'opencode' && session.settings?.effort)
       lines.push(

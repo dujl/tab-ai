@@ -98,6 +98,13 @@ export function agentInstructions(session: Session): string | undefined {
 
 // Preserve the native instruction snapshot and append channel metadata once.
 export function codexInstructions(session: Session): string | undefined {
+  return appServerInstructions(session, 'codex');
+}
+
+export function appServerInstructions(
+  session: Session,
+  provider: 'codex' | 'traecli',
+): string | undefined {
   const channel = [
       channelInstructions(session),
       session.taskId
@@ -109,7 +116,10 @@ export function codexInstructions(session: Session): string | undefined {
     ]
       .filter(Boolean)
       .join('\n\n'),
-    snapshot = session.codexDeveloperInstructions;
+    snapshot =
+      session[
+        provider === 'traecli' ? 'traecliDeveloperInstructions' : 'codexDeveloperInstructions'
+      ];
   if (!channel) return snapshot;
   const custom = session.instructions;
   // Split only the exact user-instruction suffix; preserve the native text and stored snapshot.

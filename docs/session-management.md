@@ -30,7 +30,7 @@
 
 `/tab workspace` 查询当前目录；`/tab workspace <目录或别名>` 或网页“切换工作目录”修改当前节点。路径带空格可包引号，必须已存在。
 
-框架校验当前绑定、授权、空闲、无排队输入/下载及非终端占用。已有历史要求适配器声明保留上下文迁移能力；Codex/OpenCode 已接入，Claude 尚未开放该迁移。成功后保留 Session/nativeId、模型、附加指令和历史，下一轮使用新 cwd；不执行一条 Agent 的 cd 指令来冒充切换，不通知其他单聊。关闭节点改目录后仍关闭。
+框架校验当前绑定、授权、空闲、无排队输入/下载及非终端占用。已有历史要求适配器声明保留上下文迁移能力；Codex/TRAE CLI/OpenCode 已接入，Claude 尚未开放该迁移。成功后保留 Session/nativeId、模型、附加指令和历史，下一轮使用新 cwd；不执行一条 Agent 的 cd 指令来冒充切换，不通知其他单聊。关闭节点改目录后仍关闭。
 
 API 为 `POST /api/sessions/:id/replace-workspace`，仅修改所选当前绑定节点。网页对话正文用于工作请求，不执行聊天管理路由，应使用工具栏或 API。目录迁移不等于文件白名单沙箱。
 
@@ -52,9 +52,9 @@ API 为 `POST /api/sessions/:id/replace-workspace`，仅修改所选当前绑定
 
 `tab-ai native <管理ID>` 或 `/tab detach` 释放桥接后返回原生 command/cwd；退出原生 CLI 后 `/tab attach` 交回，避免两边同时写同一个上下文。使用原生 ID 直接恢复 CLI 与打开框架 Session 是不同动作。
 
-Codex/Claude 的原生交接携带已组合指令；Codex 未获取原生指令快照时需先在框架继续一轮。OpenCode 带逐轮 system 背景的 Session 没有等价终端参数，会明确提示继续在框架使用。
+Codex/TRAE CLI/Claude 的原生交接携带已组合指令；Codex/TRAE CLI 未获取原生指令快照时需先在框架继续一轮。OpenCode 带逐轮 system 背景的 Session 没有等价终端参数，会明确提示继续在框架使用。
 
-`/tab loops` 仅枚举已接通的框架调度和 Codex goal；停止所选项须确认取消来源，不把中断一轮当成取消周期任务。未接入的原生 Cron/插件循环在原生入口管理。细节见 [原生会话压缩与循环控制](management-cards.md#原生会话压缩与循环控制)。
+`/tab loops` 仅枚举已接通的框架调度和 Codex/TRAE CLI 原生 goal；停止所选项须确认取消来源，不把中断一轮当成取消周期任务。未接入的原生 Cron/插件循环在原生入口管理。细节见 [原生会话压缩与循环控制](management-cards.md#原生会话压缩与循环控制)。
 
 实现：`core/manager.ts`、`core/session-controls.ts`、`core/session-settings.ts`、`channels/lark-session-card.ts`、各 Agent 适配器。
 

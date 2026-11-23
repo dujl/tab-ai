@@ -2,6 +2,8 @@
 
 完整的源码/安装包选择、首次任务和独立实例步骤见 [安装指南](installation.md)。本页侧重配置字段与生效范围。
 
+配置中的 Agent 必须由实际启动的 tab-ai 构建支持。公共 npm 的 0.3.0 与包含 TRAE CLI 的当前源码可能显示相同版本号，但支持的 Agent 不同；先按 [安装来源](installation.md#选择安装方式) 确认构建，再设置 `defaultAgent`。
+
 ## 1. 安装和启动
 
 需要 Node.js 22.16+，以及你准备使用的原生 Agent 运行时和登录状态。tab-ai 自己不提供模型额度或模型账户登录代理。
@@ -16,7 +18,7 @@ tab-ai doctor
 tab-ai serve
 ```
 
-`init` 会创建配置并进入机器人接入向导。只初始化本机配置：`tab-ai init --local`。`serve` 在前台运行，适合放在服务管理器中；不要求显示器，也不依赖 tmux。
+`init` 会创建配置并进入机器人接入向导。只初始化本机配置：`tab-ai init --local`。初始化和向导不会自动留下持续运行的 Bot 接收服务；`serve` 在前台运行，适合放在服务管理器中，不要求显示器，也不依赖 tmux。
 
 在另一个终端执行：
 
@@ -25,6 +27,8 @@ tab-ai dashboard
 ```
 
 复制输出的本地链接打开工作台。未执行 `npm link` 时，将 `tab-ai` 替换为 `npm start --`。进入接入向导使用 `tab-ai dashboard --setup`。
+
+`dashboard` 只输出当前配置数据目录中的登录链接，服务仍需由 `serve` 启动。排查不同实例时，确认两条命令使用同一个配置路径、数据目录和端口。
 
 ## 2. 配置文件选择
 
@@ -54,7 +58,8 @@ tab-ai -c /path/to/config.json serve
   "agents": {
     "codex": { "command": "codex" },
     "claude": {},
-    "opencode": { "command": "opencode" }
+    "opencode": { "command": "opencode" },
+    "traecli": { "command": "traecli" }
   },
   "channels": []
 }
@@ -64,8 +69,8 @@ tab-ai -c /path/to/config.json serve
 | ---------------------- | ----------------------------------------------------------------------------------------------------- |
 | `dataDir`              | SQLite、访问令牌、渠道凭证、附件和向导草稿所在地                                                      |
 | `port`                 | 本机 HTTP 端口；默认监听 `127.0.0.1`，局域网需显式配置                                                |
-| `defaultAgent`         | 新会话未指定时使用 codex、claude 或 opencode；不替换旧会话后端                                        |
-| `topicRouterAgent`     | 独立意图识别后端，仅 codex/claude；不复用工作 session                                                 |
+| `defaultAgent`         | 新会话未指定时使用 codex、traecli、claude 或 opencode；不替换旧会话后端                               |
+| `topicRouterAgent`     | 独立意图识别及报告生成后端，可选 codex/traecli/claude；不复用工作 session                             |
 | `defaultWorkspace`     | `workspaces` 中的默认别名                                                                             |
 | `workspaces`           | 目录别名映射；会话也可显式使用本机存在的绝对目录                                                      |
 | `defaultInstructions`  | 可选的默认附加指令；普通会话未配置时沿用原生指令                                                      |
@@ -79,7 +84,7 @@ tab-ai -c /path/to/config.json serve
 
 ## 4. 模型与登录
 
-先在运行服务的同一系统用户下登录 Codex、Claude Code 或 OpenCode。保留原生 HOME 和原生配置；tab-ai 不把一种 Agent 的认证转换成另一种。
+先在运行服务的同一系统用户下登录 Codex、TRAE CLI、Claude Code 或 OpenCode。保留原生 HOME 和原生配置；tab-ai 不把一种 Agent 的认证转换成另一种。TRAE CLI 使用 `agents.traecli.command` 指定命令，默认 `traecli`；完整运行步骤见 [TRAE CLI 接入](traecli.md)。
 
 模型默认从原生配置读取。要只修改一个 session，在飞书会话卡片或 Dashboard 的“模型 / 思考”面板读取该 Agent 提供的列表并保存。原生配置、项目指令和模型覆盖的详细行为见[会话手册](sessions-guide.md)。
 

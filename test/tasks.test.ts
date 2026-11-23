@@ -152,7 +152,7 @@ test('dependency starts only after reviewed success, rework reuses child native 
   }
 });
 
-test('native questions are delivered at root and answers settle original child only', async () => {
+test('native questions stay in the child topic and answers settle original child only', async () => {
   const f = fixture();
   let delivered: any;
   let answer: any;
@@ -185,12 +185,12 @@ test('native questions are delivered at root and answers settle original child o
       title: '提问',
     });
     await until(() => !!delivered);
-    assert.equal(delivered.message.route.thread, t.route.thread);
+    assert.equal(delivered.message.route.thread, f.store.get(c.sessionId!)!.route.thread);
     assert.equal(delivered.request.sessionId, c.sessionId);
     assert.throws(() => delivered.submit('bob', { answers: { style: ['简洁'] } }), /无权/);
     await f.manager.receive({
       ...incoming(`/tab answer ${delivered.request.id} {"style":["简洁"]}`),
-      route: t.route,
+      route: f.store.get(c.sessionId!)!.route,
     });
     await until(() => !!answer);
     assert.deepEqual(answer, { answers: { style: ['简洁'] } });

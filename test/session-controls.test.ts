@@ -230,7 +230,7 @@ test('card IDs and closed state survive restart; old delivered card remains usab
     next = new Manager(
       f.config,
       nextStore,
-      { codex: agent, claude: agent, opencode: agent },
+      { codex: agent, claude: agent, opencode: agent, traecli: agent },
       new Map([[channel.id, channel]]),
     );
     nextUi.click({

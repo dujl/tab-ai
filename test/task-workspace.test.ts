@@ -286,7 +286,10 @@ test('task catalog and native Agent capabilities require authentication, preserv
     const state = (await fetch(base + '/api/state', {
       headers: { Authorization: 'Bearer token' },
     }).then((r) => r.json())) as any;
-    assert.equal(state.agentCatalog.length, 3);
+    assert.deepEqual(
+      state.agentCatalog.map((a: { id: string }) => a.id),
+      ['codex', 'claude', 'opencode', 'traecli'],
+    );
     assert.equal(state.channels[0].id, 'test-lark');
     assert.ok(!JSON.stringify(state.agentCatalog).includes('TEST_APP_SECRET'));
     assert.equal((await fetch(base + '/task-structure.js')).status, 200);

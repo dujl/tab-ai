@@ -149,6 +149,7 @@ export class SessionControls {
       }
       session.instructions = instructions;
       delete session.codexDeveloperInstructions;
+      delete session.traecliDeveloperInstructions;
       this.store.save(session);
     }
     if (
@@ -175,6 +176,7 @@ export class SessionControls {
           if (!model) throw new Error('无效模型选项');
           card.draftSettings = {
             model: model.id,
+            ...(model.provider ? { provider: model.provider } : {}),
             ...(model.defaultEffort && model.efforts.some((e) => e.id === model.defaultEffort)
               ? { effort: model.defaultEffort }
               : {}),

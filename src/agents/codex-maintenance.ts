@@ -1,12 +1,18 @@
-import { codexUsage } from './token-usage.js';
+import { appServerUsage } from './token-usage.js';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { RpcProcess } from './rpc.js';
 import { agentEnvironment } from './environment.js';
 import { sameWorkspace } from '../core/session-workspace.js';
-import type { AgentUsage, CompactionResult, NativeLoop, Session } from '../core/types.js';
-import { codexInstructions } from '../core/channel-instructions.js';
-import { prepareCodexInstructions } from './codex-instructions.js';
+import {
+  agentNames,
+  type AgentUsage,
+  type CompactionResult,
+  type NativeLoop,
+  type Session,
+} from '../core/types.js';
+import { appServerInstructions } from '../core/channel-instructions.js';
+import { prepareAppServerInstructions } from './codex-instructions.js';
 import { nativeApprovalPolicy, nativeApprovalReviewer } from '../core/approval-policy.js';
 
 const goalSchema = z.object({
@@ -22,11 +28,12 @@ const key = (goal: Goal) =>
     .update(JSON.stringify([goal.threadId, goal.createdAt, goal.objective]))
     .digest('hex')
     .slice(0, 24);
-export class CodexMaintenance {
+export class AppServerMaintenance {
   private live = new Map<string, RpcProcess>();
   constructor(
     private command: string,
     private secrets: string[],
+    private provider: 'codex' | 'traecli' = 'codex',
   ) {}
   attach(id: string, rpc: RpcProcess): void {
     this.live.set(id, rpc);
@@ -58,7 +65,7 @@ export class CodexMaintenance {
     if (restoredUsage)
       rpc.onMessage = (message) => {
         if (message.method === 'thread/tokenUsage/updated') {
-          const value = codexUsage(message.params, session.nativeId);
+          const value = appServerUsage(message.params, session.nativeId, this.provider);
           if (value) restoredUsage(value);
         }
       };
@@ -68,7 +75,7 @@ export class CodexMaintenance {
         capabilities: { experimentalApi: true },
       });
       rpc.write({ method: 'initialized' });
-      await prepareCodexInstructions(session, rpc);
+      await prepareAppServerInstructions(session, rpc, this.provider);
       const result = z
         .object({
           thread: z.object({ id: z.string(), cwd: z.string().optional() }),
@@ -86,8 +93,11 @@ export class CodexMaintenance {
               ? { approvalsReviewer: nativeApprovalReviewer(session) }
               : {}),
             ...(session.settings ? { model: session.settings.model } : {}),
-            ...(codexInstructions(session)
-              ? { developerInstructions: codexInstructions(session) }
+            ...(this.provider === 'traecli' && session.settings?.provider
+              ? { modelProvider: session.settings.provider }
+              : {}),
+            ...(appServerInstructions(session, this.provider)
+              ? { developerInstructions: appServerInstructions(session, this.provider) }
               : {}),
           }),
         );
@@ -95,7 +105,7 @@ export class CodexMaintenance {
         nativeApprovalReviewer(session) === 'auto_review' &&
         (result.approvalsReviewer !== 'auto_review' || result.approvalPolicy !== 'on-request')
       )
-        throw new Error('Codex 未确认本会话自动审查模式；未执行管理操作。');
+        throw new Error(`${agentNames[this.provider]} 未确认本会话自动审查模式；未执行管理操作。`);
       if (
         result.thread.id !== session.nativeId ||
         (result.thread.cwd && !sameWorkspace(result.thread.cwd, session.workspace))
@@ -140,7 +150,7 @@ export class CodexMaintenance {
           if (data?.threadId !== session.nativeId) return;
           if (message.method === 'turn/started') turnId = data.turn?.id;
           if (message.method === 'thread/tokenUsage/updated' && data.turnId === turnId)
-            usage = codexUsage(data, session.nativeId);
+            usage = appServerUsage(data, session.nativeId, this.provider);
           if (message.method === 'item/completed' && data.item?.type === 'contextCompaction')
             compacted = true;
           if (message.method === 'thread/compacted') compacted = true;
@@ -188,7 +198,7 @@ export class CodexMaintenance {
         : [
             {
               id: key(goal),
-              label: 'Codex 原生 goal（持续目标）',
+              label: `${agentNames[this.provider]} 原生 goal（持续目标）`,
               status: goal.status,
               detail: goal.objective,
             },
@@ -211,3 +221,5 @@ export class CodexMaintenance {
     });
   }
 }
+
+export class CodexMaintenance extends AppServerMaintenance {}

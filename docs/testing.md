@@ -38,7 +38,7 @@ npx tsx --test --test-concurrency=4 test/tasks.test.ts test/dual-entry.test.ts
 | ------------------ | ------------------------------------------------------------------------------------- |
 | 任务树、依赖及接续 | tasks、task-workspace、task-migration、session-hierarchy、session-reports             |
 | Web/IM 与 API      | dual-entry、server、management-api、dashboard-tree                                    |
-| 模型、目录与上下文 | agents、opencode、session-settings、workspace-switch、session-maintenance             |
+| 模型、目录与上下文 | agents、traecli、opencode、session-settings、workspace-switch、session-maintenance    |
 | 审批与问答         | scoped-approvals、mcp-elicitation、interaction-timeout-feedback、lark-async-questions |
 | 管理卡片           | session-menu、session-controls、management-cards、lark-card-update                    |
 | Token 统计         | token-usage、native-usage-history；包括旧会话、压缩、身份及采样时效                   |

@@ -85,7 +85,7 @@ test('main chat preserves native context across topics and full service restart'
     next = new Manager(
       f.config,
       store,
-      { codex: agent, claude: agent, opencode: agent },
+      { codex: agent, claude: agent, opencode: agent, traecli: agent },
       new Map([[channel.id, channel]]),
     );
     await next.receive(message('after restart'));

@@ -30,7 +30,7 @@
 - 首轮任务：本次要做什么，属于用户输入。
 - 项目指令：原生 Agent 根据工作目录加载，受原生规则控制。
 
-各聊天通道自动附加当前平台、机器人和单聊 / 群聊背景；用户附加指令仍独立保存。Codex 使用会话级 developer instructions，并保留本机已有 developer instructions；Claude 在原生 preset 上追加通道背景和用户指令；OpenCode 使用其逐轮 system 参数。未关联聊天通道且没有用户附加指令的本地会话保持原生默认。OpenCode 带通道背景或附加指令的会话暂不提供等价终端交接，以免丢失逐轮约束。
+各聊天通道自动附加当前平台、机器人和单聊 / 群聊背景；用户附加指令仍独立保存。Codex 和 TRAE CLI 使用会话级 developer instructions，并保留本机已有 developer instructions；Claude 在原生 preset 上追加通道背景和用户指令；OpenCode 使用其逐轮 system 参数。未关联聊天通道且没有用户附加指令的本地会话保持原生默认。OpenCode 带通道背景或附加指令的会话暂不提供等价终端交接，以免丢失逐轮约束。
 
 聊天可用 `/tab new codex default --instructions 你是一位严谨的架构评审者`；`/tab instructions` 只查看，不作为工作输入发送。自然语言普通新会话可按明确格式指定角色；任务编排入口的限制见[任务手册](task-orchestration.md)。
 

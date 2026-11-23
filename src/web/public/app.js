@@ -135,11 +135,14 @@ function renderState() {
   $('workspace').hidden = !session;
   if (!session) return;
   $('title').textContent =
-    `${session.title || { codex: 'Codex', claude: 'Claude Code', opencode: 'OpenCode' }[session.agent]} / ${session.id.slice(0, 8)}`;
+    `${session.title || { codex: 'Codex', claude: 'Claude Code', opencode: 'OpenCode', traecli: 'TRAE CLI' }[session.agent]} / ${session.id.slice(0, 8)}`;
   $('subtitle').textContent = session.workspace;
-  $('agent').textContent = { codex: 'CODEX', claude: 'CLAUDE CODE', opencode: 'OPENCODE' }[
-    session.agent
-  ];
+  $('agent').textContent = {
+    codex: 'CODEX',
+    claude: 'CLAUDE CODE',
+    opencode: 'OPENCODE',
+    traecli: 'TRAE CLI',
+  }[session.agent];
   $('status').textContent = session.operation === 'compact' ? '压缩中' : labels[session.status];
   $('status').className = `status ${session.status}`;
   $('im-entry-status').hidden = !session.imEntry;

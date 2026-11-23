@@ -54,18 +54,18 @@
 | ----------------- | ---------------------------------------- | ---------------------------------------------------------- |
 | 查看压缩面板      | `/tab compact`（别名 `/tab compaction`） | 显示能力、占用状态和原生压缩说明                           |
 | 执行压缩          | `/tab compact start`                     | 异步调用原生 compaction；不是普通工作提示或清空会话        |
-| 查看自动继续项    | `/tab loops`（别名 `/tab loop`）         | 列出当前会话已接通的任务树调度及 Codex goal                |
+| 查看自动继续项    | `/tab loops`（别名 `/tab loop`）         | 列出当前会话已接通的任务树调度及 Codex/TRAE CLI 原生 goal  |
 | 停止所选项        | `/tab loops stop <ID>`                   | 按类型暂停任务树，或清除当前原生 goal 并等待对应当前轮中断 |
 | 停止当前轮 / 压缩 | `/tab stop`                              | 中断当前执行；不会自动取消其他周期任务                     |
 
-压缩使用 Codex `thread/compact/start`、Claude SDK 的原生 `/compact`、OpenCode 的原生 `/session/:id/summarize`。压缩需要模型调用；只收到受理回执不算完成，须分别确认 `contextCompaction` 完成、`compact_boundary`、新的原生摘要消息。内容不足、登录失败、超时或中止均明确报告，不自动重试。
+压缩使用 Codex/TRAE CLI `thread/compact/start`、Claude SDK 的原生 `/compact`、OpenCode 的原生 `/session/:id/summarize`。压缩需要模型调用；只收到受理回执不算完成，须分别确认 app-server `contextCompaction` 完成、`compact_boundary`、新的原生摘要消息。内容不足、登录失败、超时或中止均明确报告，不自动重试。
 
 压缩保留管理/原生会话 ID、目录、模型设置、附加指令及框架历史；原生较早上下文会总结，不能保证逐字细节全部保留。已有关闭会话压缩后仍关闭，运行/等待审批/终端占用/下载时拒绝压缩。同一会话只允许一个工作或压缩操作；任务调度不能在压缩中启动下一轮。服务重启清理中断标记，不自动重复模型调用。
 
 循环管理的范围：
 
 - **任务树自动调度**：持久化 `paused`，阻止当前任务及其子任务继续领取队列，再等待已运行轮次中断；待处理资料和原生上下文保留，可通过已有任务恢复命令显式继续。
-- **Codex 原生 goal**：使用当前运行进程的 RPC（空闲时恢复同一线程），读取目标身份，调用 `thread/goal/clear` 并带 `origin: user`，再次确认目标为空。原生目标取消未确认时，不把中断当前轮当作取消成功；旧目标 ID 不能清除不同的新目标。
+- **Codex/TRAE CLI 原生 goal**：使用当前运行进程的 RPC（空闲时恢复同一线程），读取目标身份，调用 `thread/goal/clear` 并带 `origin: user`，再次确认目标为空。原生目标取消未确认时，不把中断当前轮当作取消成功；旧目标 ID 不能清除不同的新目标。
 - **Claude Cron `/loop`、外部脚本及插件循环**：当前未接入确定性的枚举/取消协议，面板明确提示原生入口；不会扫杀进程、删除调度配置或借用工作模型猜测“已经停止”。Claude 固定周期 loop 的取消与中断当前轮不同，需原生 CronDelete 等能力；本工程每轮 SDK 连接会关闭，也不承诺原生后台循环在两轮之间持续运行。
 
 原生资料：[Codex App Server](https://learn.chatgpt.com/docs/app-server#trigger-thread-compaction)、[Claude SDK 压缩](https://code.claude.com/docs/en/agent-sdk/slash-commands#compact-history-with-compact)、[Claude loop 停止规则](https://code.claude.com/docs/en/scheduled-tasks#stop-a-loop)、[OpenCode Server](https://docs.opencode.ai/docs/server/)。适配能力与真实原生登录应分别按 [验收](acceptance.md) 核对。
@@ -84,20 +84,20 @@
 
 本会话信息紧凑显示“上下文”和“Token 消耗”，详情保留最近调用的输入、缓存读取、缓存写入、输出、更新时间与统计口径。压缩结果和 Dashboard 压缩面板显示同一次操作的前后 tokens；只有两端都上报时才计算变化。累计消耗不会因压缩减少，压缩本身也可能消耗 tokens。原生估算不是账单，不根据字符数补造数据。
 
-- Codex：采集 `thread/tokenUsage/updated` 的 `last.totalTokens`、`modelContextWindow` 与 `total`；上下文是最近原生统计/估算，累计是原生会话累计。独立压缩连接采集恢复时的基线与压缩轮次最后的有效统计，并等待完成标记。
+- Codex/TRAE CLI：采集 `thread/tokenUsage/updated` 的 `last.totalTokens`、`modelContextWindow` 与 `total`；上下文是最近原生统计/估算，累计是各自原生会话累计。独立压缩连接采集恢复时的基线与压缩轮次最后的有效统计，并等待完成标记；两个提供方的原生 ID 和用量缓存彼此独立。
 - Claude Code：普通调用使用主 Agent 消息的 usage 作为最近调用参考；result.modelUsage 保持原生调用累计口径，不累加重复快照。手动压缩优先使用 `compact_metadata.pre_tokens/post_tokens`；未提供 post_tokens 时等待后续原生统计。多模型时不猜测当前窗口容量。
 - OpenCode：展示最终响应的 tokens，缓存与 reasoning 按原生字段归一化为最近调用参考；不把它冒充整会话累计。summarize 的摘要调用用量不是压缩后的上下文，未获得后者时显示待更新。
 
-已有 Codex 会话会按当前 nativeId 只读补查原生历史统计，优先使用较新的有效样本，展示来源和采样时间；无需重新执行任务或调用模型。只有上报窗口容量才展示占比，缺失显示“未上报”；零是有效数值。压缩完成但缺少新计数、或超时/中止/重启结果未确认时，旧上下文占用不再作为当前值展示。累计、历史与会话标识保留；重置或更换原生会话后不复用旧计数。
+已有 Codex 和 TRAE CLI 会话会按当前 nativeId 只读补查各自原生历史统计，优先使用较新的有效样本，展示来源和采样时间；无需重新执行任务或调用模型。只有上报窗口容量才展示占比，缺失显示“未上报”；零是有效数值。压缩完成但缺少新计数、或超时/中止/重启结果未确认时，旧上下文占用不再作为当前值展示。累计、历史与会话标识保留；重置、更换原生会话或切换提供方后不复用旧计数。
 
-“停止压缩”是请求中止正在执行的原生操作，不是撤销摘要：Codex 关闭本次独立 app-server，Claude 使用 SDK AbortController，OpenCode 在未确认完成时调用 session abort；已写入的原生摘要无法由此回滚。中止后未确认完成则如实标记 unconfirmed，不承诺恢复原上下文。
+“停止压缩”是请求中止正在执行的原生操作，不是撤销摘要：Codex/TRAE CLI 关闭本次独立 app-server，Claude 使用 SDK AbortController，OpenCode 在未确认完成时调用 session abort；已写入的原生摘要无法由此回滚。中止后未确认完成则如实标记 unconfirmed，不承诺恢复原上下文。
 
 实现口径参考 [Codex 压缩后重算用量](https://github.com/openai/codex/blob/main/codex-rs/core/src/compact.rs) 与 [OpenCode 用量归一化](https://github.com/anomalyco/opencode/blob/dev/packages/opencode/src/session/session.ts)，并以安装版本实际上报字段为准。
 
 ### 原生历史统计读取
 
-Codex 适配器提供可选的 `historicalUsage` 能力：遵循本进程 CODEX_HOME（未设置时为 ~/.codex），只读查询原生 state 数据库定位 rollout，数据库不可用时从 sessions/archived_sessions 文件名索引寻找。读取前校验原生记录 session_meta.id 与目标 nativeId 完全相同，路径位于原生历史目录；只解释 token_count 与 compaction 标记，不展示原始对话内容。
+Codex 和 TRAE CLI 的 app-server 适配器均提供可选的 `historicalUsage` 能力。Codex 遵循本进程 `CODEX_HOME`（未设置时为 `~/.codex`）；TRAE CLI 遵循 `TRAECLI_HOME`，否则使用 `TRAE_HOME/cli`（`TRAE_HOME` 未设置时为 `~/.trae`）。适配器只读查询各自原生 state 数据库定位 rollout，数据库不可用时从 `sessions`/`archived_sessions` 文件名索引寻找。读取前校验原生记录 `session_meta.id` 与目标 nativeId 完全相同，路径位于对应提供方的原生历史目录；只解释 `token_count` 与 compaction 标记，不展示原始对话内容。
 
 读取以文件签名缓存，最多扫描文件头 1 MiB 和末尾 4 MiB，文件发生追加时重新采样；过大元数据、缺失或不兼容记录不阻断菜单。原生上下文 total_tokens 独立于 input/output 字段，压缩后即使输入和输出计数为零也保留非零上下文。发现 compacted 后尚无新 token_count 时，旧占用不再当作当前值；框架中止/超时标记还要与采样及原生压缩时间校验。
 
-历史补读是展示覆盖层，不写回会话，不修改 recency、任务状态、管理 revision 或原生历史。聊天菜单、持久状态卡和网页维护/执行记录共享该覆盖层；压缩前基线也可使用已验证的历史样本。其他 Agent 未提供此本地历史能力时继续使用已采集的原生事件，不套用 Codex 的目录或文件格式。
+历史补读是展示覆盖层，不写回会话，不修改 recency、任务状态、管理 revision 或原生历史。聊天菜单、持久状态卡和网页维护/执行记录共享该覆盖层；压缩前基线也可使用已验证的历史样本。Codex 与 TRAE CLI 的目录、缓存和 session 标识彼此独立；其他 Agent 未提供此本地历史能力时继续使用已采集的原生事件，不套用二者的目录或文件格式。

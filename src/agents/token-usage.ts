@@ -10,12 +10,34 @@ const codexSchema = z.object({
     modelContextWindow: count.positive().nullish(),
   }),
 });
+const traecliBreakdown = tokenBreakdownSchema
+  .extend({ cacheCreationInputTokens: count.optional() })
+  .transform(({ cacheCreationInputTokens, ...value }) => ({
+    ...value,
+    ...(cacheCreationInputTokens === undefined
+      ? {}
+      : { cacheWriteInputTokens: cacheCreationInputTokens }),
+  }));
+const traecliSchema = codexSchema.extend({
+  tokenUsage: codexSchema.shape.tokenUsage.extend({
+    last: traecliBreakdown,
+    total: traecliBreakdown,
+  }),
+});
+
 export function codexUsage(params: unknown, nativeId?: string): AgentUsage | undefined {
-  const parsed = codexSchema.safeParse(params);
+  return appServerUsage(params, nativeId, 'codex');
+}
+export function appServerUsage(
+  params: unknown,
+  nativeId: string | undefined,
+  provider: 'codex' | 'traecli',
+): AgentUsage | undefined {
+  const parsed = (provider === 'traecli' ? traecliSchema : codexSchema).safeParse(params);
   if (!parsed.success || parsed.data.threadId !== nativeId) return;
   const value = parsed.data.tokenUsage;
   return {
-    source: 'codex',
+    source: provider,
     last: value.last,
     total: value.total,
     totalScope: 'session',

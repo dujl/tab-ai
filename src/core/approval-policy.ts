@@ -6,37 +6,56 @@ export function supportsAutoApproval(
   request: Pick<Interaction, 'kind' | 'approvalAutomation' | 'approvalOptions'>,
 ) {
   return (
-    agent === 'codex' &&
+    (agent === 'codex' || agent === 'traecli') &&
     request.kind === 'approval' &&
-    request.approvalAutomation === 'codex-command-file' &&
+    request.approvalAutomation ===
+      (agent === 'traecli' ? 'traecli-command-file' : 'codex-command-file') &&
     approvalOptions(request).some((o) => o.id === 'allow')
   );
 }
 
 // An explicit `native` opts out of the framework default for this session.
 export function selectedApprovalPolicy(session: Pick<Session, 'agent' | 'approvalPolicy'>): string {
-  return session.approvalPolicy ?? (session.agent === 'codex' ? 'on-request' : 'native');
+  return (
+    session.approvalPolicy ??
+    (session.agent === 'codex' || session.agent === 'traecli' ? 'on-request' : 'native')
+  );
 }
 export function nativeApprovalPolicy(
   session: Pick<Session, 'agent' | 'approvalPolicy'>,
 ): string | undefined {
   const mode = selectedApprovalPolicy(session);
-  if (session.agent === 'codex' && ['on-request-auto-review', 'auto-allow'].includes(mode))
+  if (
+    (session.agent === 'codex' || session.agent === 'traecli') &&
+    ['on-request-auto-review', 'auto-allow'].includes(mode)
+  )
     return 'on-request';
   return mode === 'native' ? undefined : mode;
 }
 export function nativeApprovalReviewer(session: Pick<Session, 'agent' | 'approvalPolicy'>) {
-  if (session.agent !== 'codex' || selectedApprovalPolicy(session) === 'native') return undefined;
+  if (
+    (session.agent !== 'codex' && session.agent !== 'traecli') ||
+    selectedApprovalPolicy(session) === 'native'
+  )
+    return undefined;
   return session.approvalPolicy === 'on-request-auto-review'
     ? ('auto_review' as const)
     : ('user' as const);
 }
-export function approvalModes(agent: AgentKind) {
+export function approvalModes(
+  agent: AgentKind,
+): { id: string; label: string; description: string }[] {
   const native = {
     id: 'native',
     label: '沿用原生配置',
     description: '不覆盖原生 Agent 的审批设置，实际行为由原生配置及组织要求决定。',
   };
+  if (agent === 'traecli')
+    return approvalModes('codex').map((mode) => ({
+      ...mode,
+      label: mode.label.replaceAll('Codex', 'TRAE CLI'),
+      description: mode.description.replaceAll('Codex', 'TRAE CLI'),
+    }));
   if (agent === 'codex')
     return [
       native,
@@ -109,7 +128,12 @@ export function approvalPolicyContext(
             ? '原生当前生效策略。'
             : '本会话设置。') + mode.description,
     };
-  if (agent === 'codex' && policy && typeof policy === 'object' && 'granular' in policy) {
+  if (
+    (agent === 'codex' || agent === 'traecli') &&
+    policy &&
+    typeof policy === 'object' &&
+    'granular' in policy
+  ) {
     const granular = (policy as { granular: unknown }).granular;
     if (granular && typeof granular === 'object') {
       const names: Record<string, string> = {

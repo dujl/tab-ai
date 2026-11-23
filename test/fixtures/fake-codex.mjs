@@ -145,6 +145,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
         params: {
           threadId: 'native-test-1',
           callId: 'topic-call',
+          turnId: 'turn-1',
           tool: 'topic_report',
           arguments: {
             kind: 'final',
