@@ -1,3 +1,4 @@
+import { agentKindSchema } from './agent-kind.js';
 import { SessionUsage } from './session-usage.js';
 import { sessionInformation } from './session-information.js';
 import {
@@ -144,9 +145,9 @@ const HELP = `tab-ai 管理命令（不会发送给 agent）：
 /tab tasks — 查看本任务树或本聊天的主任务
 /tab task-to <任务短ID> 内容 — 定向补充要求
 /tab task-pause|task-resume|task-cancel [任务ID] — 暂停、继续或取消任务树
-/tab new [codex|claude|opencode] [工作区别名] — 飞书新建独立话题与会话
-/tab topic [codex|claude|opencode] [工作区别名] — 同 /tab new
-/tab init [codex|claude|opencode] [工作区别名] — 首次初始化主会话，不执行任务
+/tab new [codex|claude|opencode|traecli] [工作区别名] — 飞书新建独立话题与会话
+/tab topic [codex|claude|opencode|traecli] [工作区别名] — 同 /tab new
+/tab init [codex|claude|opencode|traecli] [工作区别名] — 首次初始化主会话，不执行任务
 创建命令可追加 --instructions 附加指令（支持多行；首次任务开始后固定）
 /tab workspace [目录] — 查看或切换当前主会话工作目录（保留旧历史）
 /tab instructions — 查看当前会话的附加指令
@@ -384,7 +385,7 @@ export class Manager {
     this.store.save(session);
     await this.sendManagement(
       destination,
-      `【tab-ai ${task.parentId ? '子任务' : '主任务'}】\n${task.title}\n${task.objective}\n任务 ID：${task.id}\n会话 ID：${session.id}\n工作目录：${session.workspace}\n在此话题直接补充要求；/tab tasks 查看任务树。${task.deferred ? '任务已建立，尚未执行；发送第一条要求后开始。' : task.parentId ? '问题和审批将汇总到主任务。' : '主 Agent 会自动拆分、验收并汇总。'}`,
+      `【tab-ai ${task.parentId ? '子任务' : '主任务'}】\n${task.title}\n${task.objective}\n任务 ID：${task.id}\n会话 ID：${session.id}\n工作目录：${session.workspace}\n在此话题直接补充要求；/tab tasks 查看任务树。${task.deferred ? '任务已建立，尚未执行；发送第一条要求后开始。' : task.parentId ? '问题和审批在当前子会话处理；成果总结按任务关系提交父任务。' : '主 Agent 会自动拆分、验收并汇总。'}`,
       session.id,
       'tasks',
     );
@@ -496,9 +497,11 @@ export class Manager {
     );
   }
   agentCatalog() {
-    return (['codex', 'claude', 'opencode'] as const).map((id) => ({
+    return (['codex', 'claude', 'opencode', 'traecli'] as const).map((id) => ({
       id,
-      name: { codex: 'Codex', claude: 'Claude Code', opencode: 'OpenCode' }[id],
+      name: { codex: 'Codex', claude: 'Claude Code', opencode: 'OpenCode', traecli: 'TRAE CLI' }[
+        id
+      ],
       default: id === this.config.defaultAgent,
       canCompact: !!this.agents[id].compact,
       canControlLoops: !!this.agents[id].loops,
@@ -539,7 +542,7 @@ export class Manager {
         title: z.string().trim().min(1).max(60),
         objective: z.string().max(8000).default(''),
         criteria: z.string().max(4000).default('按目标完成并提供可核验成果'),
-        agent: z.enum(['codex', 'claude', 'opencode']).optional(),
+        agent: agentKindSchema.optional(),
         workspace: z.string().max(4096).optional(),
         sourceSessionId: z.string().uuid().optional(),
         start: z.boolean().default(false),
@@ -1026,7 +1029,7 @@ export class Manager {
     const session = this.store.get(id);
     if (!session) throw Error('会话不存在');
     const clearAuto =
-      session.agent === 'codex' &&
+      (session.agent === 'codex' || session.agent === 'traecli') &&
       selectedApprovalPolicy(session) === 'auto-allow' &&
       (revoke || mode === 'on-request');
     if (
@@ -1040,7 +1043,8 @@ export class Manager {
     if (!approvalModes(session.agent).some((m) => m.id === mode))
       throw Error('此 Agent 不支持所选审批策略');
     if (!revoke) {
-      if (mode === 'native' && session.agent !== 'codex') delete session.approvalPolicy;
+      if (mode === 'native' && session.agent !== 'codex' && session.agent !== 'traecli')
+        delete session.approvalPolicy;
       else session.approvalPolicy = mode;
     }
     if (clearAuto) session.approvalPolicy = 'on-request';
@@ -1913,6 +1917,7 @@ export class Manager {
     message: Incoming,
     controller: AbortController,
   ): Promise<void> {
+    message = this.sessionOrigin(session, message);
     if (!session.taskId && sessionParentId(session) && !message.topicReportRequested)
       this.topics.beginWork(session);
     session.channelContext = this.channelContext(
@@ -2485,6 +2490,16 @@ export class Manager {
     this.answer(session.id, request.id, { answers: { [question.id]: [answer] } });
     return true;
   }
+  private sessionOrigin(session: Session, message: Incoming): Incoming {
+    return {
+      ...message,
+      route: session.route,
+      ...(session.route.platform === 'lark'
+        ? { replyTo: session.route.thread.startsWith('om_') ? session.route.thread : undefined }
+        : {}),
+      sessionAnchor: virtualSessions(session.route),
+    };
+  }
   private askAsync(
     session: Session,
     message: Incoming,
@@ -2492,6 +2507,7 @@ export class Manager {
     delivery: Promise<void>,
   ): void {
     if (request.kind !== 'question') throw new Error('异步交互只支持提问。');
+    message = this.sessionOrigin(session, message);
     const origin = this.active.get(session.id),
       nativeId = session.nativeId,
       workspace = session.workspace,
@@ -2583,12 +2599,8 @@ export class Manager {
         new Set(request.questions.map((q) => q.id)).size !== request.questions.length)
     )
       throw new Error('Agent 返回了空问题或重复的问题 ID，请使用原生终端。');
-    const task = this.tasks.forSession(session.id),
-      root = task?.parentId ? this.store.taskRecord(task.rootId) : undefined;
-    const rootSession = root?.sessionId ? this.store.get(root.sessionId) : undefined;
-    const interactionMessage = rootSession
-      ? { ...message, id: randomUUID(), replyTo: undefined, route: rootSession.route }
-      : message;
+    const task = this.tasks.forSession(session.id);
+    const interactionMessage = this.sessionOrigin(session, message);
     const canAuto = supportsAutoApproval(session.agent, request);
     const automatic =
       canAuto && selectedApprovalPolicy(this.store.get(session.id) ?? session) === 'auto-allow';
@@ -2647,16 +2659,6 @@ export class Manager {
       session.status = 'waiting';
       this.save(session);
     }
-    if (rootSession) {
-      this.controls.refresh(rootSession.id);
-      this.trackInteraction(
-        this.send(
-          message,
-          `【tab-ai 系统】此任务需要你的回答，已汇总到主任务「${root?.title}」。也可在此使用 /tab pending。`,
-          session.id,
-        ),
-      );
-    }
     this.store.event(session.id, 'interaction', JSON.stringify(interaction));
     this.controls.refresh(session.id);
     return new Promise((resolve, reject) => {
@@ -2694,7 +2696,7 @@ export class Manager {
                   await this.send(
                     interactionMessage,
                     `【tab-ai · 卡片状态同步提示】\n${request.kind === 'approval' ? '审批' : '提问'}编号：${interaction.id.slice(0, 8)}\n${finished}。\n原卡片状态未确认更新，旧按钮已失效，请勿重复操作。${request.kind === 'approval' ? '审批结果已记录；是否执行成功请查看工具执行记录。' : ''}`,
-                    rootSession?.id ?? session.id,
+                    session.id,
                   );
               }
             })(),
@@ -2753,17 +2755,13 @@ export class Manager {
             JSON.stringify({
               id: interaction.id,
               kind: interaction.kind,
-              notificationSessionId: rootSession?.id ?? session.id,
+              notificationSessionId: session.id,
             }),
           );
           // Independent of model completion and card update: WeCom cannot patch a
           // card proactively, and a failed/late card delivery still needs notice.
           this.trackInteraction(
-            this.send(
-              interactionMessage,
-              interactionTimeoutText(interaction),
-              rootSession?.id ?? session.id,
-            ),
+            this.send(interactionMessage, interactionTimeoutText(interaction), session.id),
           );
         }
         if (request.mode !== 'async') {
@@ -2779,11 +2777,7 @@ export class Manager {
       };
       const abort = () => finish(undefined, new Error('交互已取消'));
       const timer = setTimeout(
-        () =>
-          finish(
-            undefined,
-            new InteractionTimeoutError(rootSession?.id ?? session.id, request.kind),
-          ),
+        () => finish(undefined, new InteractionTimeoutError(session.id, request.kind)),
         this.config.interactionTimeoutMs,
       );
       this.pending.set(interaction.id, {
@@ -2792,7 +2786,7 @@ export class Manager {
         cancel: () => finish(undefined, new Error('交互已取消')),
       });
       signal.addEventListener('abort', abort, { once: true });
-      const channel = this.channels.get(message.route.account);
+      const channel = this.channels.get(interactionMessage.route.account);
       this.trackInteraction(
         (async () => {
           try {
@@ -2804,7 +2798,10 @@ export class Manager {
               (sender, answer) => {
                 if (
                   sender !== session.route.sender ||
-                  !this.authorized({ ...message, route: { ...message.route, sender } })
+                  !this.authorized({
+                    ...interactionMessage,
+                    route: { ...interactionMessage.route, sender },
+                  })
                 )
                   throw new Error('此用户无权回答这个请求。');
                 this.answer(session.id, interaction.id, answer);
@@ -2823,11 +2820,7 @@ export class Manager {
               '卡片投递失败或结果未知，已改用文字答题方式。',
             );
           }
-          await this.send(
-            interactionMessage,
-            interactionText(interaction),
-            rootSession?.id ?? session.id,
-          );
+          await this.send(interactionMessage, interactionText(interaction), session.id);
         })(),
       );
     });
@@ -2871,7 +2864,7 @@ export class Manager {
       for (const other of [...this.pending.values()])
         if (
           other.request.sessionId === sessionId &&
-          supportsAutoApproval('codex', other.request) &&
+          supportsAutoApproval(this.store.get(sessionId)!.agent, other.request) &&
           (other.request.expiresAt ?? Infinity) > Date.now()
         ) {
           this.store.event(
@@ -2935,6 +2928,7 @@ export class Manager {
       delete latest.contextUsageInvalidated;
       delete latest.lastCompactionTokens;
       delete latest.codexTaskTools;
+      delete latest.traecliTaskTools;
       delete latest.pendingAttachments;
       delete latest.pendingAttachmentRequest;
       delete latest.pendingInitialTask;
@@ -3421,7 +3415,7 @@ export class Manager {
         key: z.string().min(1).max(200),
         title: z.string().trim().min(1).max(80),
         objective: z.string().max(8000).default(''),
-        agent: z.enum(['codex', 'claude', 'opencode']).optional(),
+        agent: agentKindSchema.optional(),
         workspace: z.string().min(1).max(4096).optional(),
         instructions: z.string().max(16000).optional(),
       })
@@ -3908,6 +3902,7 @@ export class Manager {
         );
       if (args[0] === 'create')
         return adminReply('新建独立会话，或发送 /tab task <目标> 创建主任务；不会重置当前会话。', [
+          { label: '新建 TRAE CLI', command: '/tab new traecli', mutation: true },
           { label: '新建 Codex', command: '/tab new codex', mutation: true },
           { label: '新建 Claude', command: '/tab new claude', mutation: true },
           { label: '新建 OpenCode', command: '/tab new opencode', mutation: true },
@@ -4534,7 +4529,7 @@ export class Manager {
       const info = this.approvalPolicyInfo(current.id);
       return this.sendManagement(
         message,
-        `本会话审批策略：${info.modes.find((m) => m.id === info.mode)?.label ?? info.mode}${info.defaulted && current.agent === 'codex' ? '（框架默认）' : ''}\n\n${info.modes.map((m) => `${m.label}（${m.id}）\n${m.description}`).join('\n\n')}\n\n审批卡片可选择本次、原生授权范围或本会话自动允许命令与文件审批。自动允许不含提问和登录授权，可用 /tab approval on-request 恢复人工审批。仅影响当前 Session，不修改共享原生配置或沙箱权限；关闭、重置或清除授权后取消自动允许。`,
+        `本会话审批策略：${info.modes.find((m) => m.id === info.mode)?.label ?? info.mode}${info.defaulted && (current.agent === 'codex' || current.agent === 'traecli') ? '（框架默认）' : ''}\n\n${info.modes.map((m) => `${m.label}（${m.id}）\n${m.description}`).join('\n\n')}\n\n审批卡片可选择本次、原生授权范围或本会话自动允许命令与文件审批。自动允许不含提问和登录授权，可用 /tab approval on-request 恢复人工审批。仅影响当前 Session，不修改共享原生配置或沙箱权限；关闭、重置或清除授权后取消自动允许。`,
         current.id,
         'approval',
         [

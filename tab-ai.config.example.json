@@ -9,7 +9,8 @@
   "agents": {
     "codex": { "command": "codex" },
     "claude": {},
-    "opencode": { "command": "opencode" }
+    "opencode": { "command": "opencode" },
+    "traecli": { "command": "traecli" }
   },
   "maxConcurrentRuns": 4,
   "turnTimeoutMs": 1800000,

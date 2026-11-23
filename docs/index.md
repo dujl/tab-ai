@@ -10,6 +10,7 @@
 | 界面           | [Dashboard](dashboard.md)、[任务结构](unified-tasks-and-structure.md)、[树形投影](session-tree-design.md)                                                               |
 | 会话与管理     | [使用手册](sessions-guide.md)、[会话控制](session-management.md)、[跨通道菜单](management-cards.md)                                                                     |
 | Bot 与群聊     | [角色、授权与群模式](bot-management.md)                                                                                                                                 |
+| TRAE CLI       | [TRAE CLI 接入与运行](traecli.md)                                                                                                                                       |
 | 执行与交互     | [审批策略](session-approvals.md)、[审批/提问适配](chat-interactions.md)、[MCP 表单](mcp-elicitation.md)、[执行记录](execution-records.md)、[Agent 待办](agent-plans.md) |
 | 开发           | [架构](architecture.md)、[数据库](database.md)、[API](api.md)、[功能与限制](capabilities.md)、[贡献](../CONTRIBUTING.md)、[测试](testing.md)                            |
 | 运行与验证     | [运维](operations.md)、[验收](acceptance.md)、[排错](troubleshooting.md)、[安全](../SECURITY.md)                                                                        |

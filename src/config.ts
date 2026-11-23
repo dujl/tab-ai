@@ -1,3 +1,4 @@
+import { agentKindSchema } from './core/agent-kind.js';
 import { groupIdSchema, groupModeSchema } from './core/group-mode.js';
 import { z } from 'zod';
 import { readFileSync, realpathSync, statSync } from 'node:fs';
@@ -36,21 +37,29 @@ const schema = z
         '请输入私有局域网 IPv4 地址',
       )
       .optional(),
-    defaultAgent: z.enum(['codex', 'claude', 'opencode']).default('codex'),
+    defaultAgent: agentKindSchema.default('codex'),
     defaultInstructions: instructionsSchema.optional(),
     handoffInlineLimit: z.number().int().min(1).max(1000).optional(),
-    topicRouterAgent: z.enum(['codex', 'claude']).optional(),
+    topicRouterAgent: agentKindSchema.pipe(z.enum(['codex', 'claude', 'traecli'])).optional(),
     defaultWorkspace: z.string().default('default'),
     workspaces: z.record(z.string(), z.string()).refine((v) => Object.keys(v).length > 0),
     agents: z
       .object({
+        traecli: z
+          .object({ command: z.string().default('traecli') })
+          .default({ command: 'traecli' }),
         codex: z.object({ command: z.string().default('codex') }).default({ command: 'codex' }),
         claude: z.object({ command: z.string().optional() }).default({}),
         opencode: z
           .object({ command: z.string().default('opencode') })
           .default({ command: 'opencode' }),
       })
-      .default({ codex: { command: 'codex' }, claude: {}, opencode: { command: 'opencode' } }),
+      .default({
+        codex: { command: 'codex' },
+        claude: {},
+        opencode: { command: 'opencode' },
+        traecli: { command: 'traecli' },
+      }),
     maxConcurrentRuns: z.number().int().min(1).max(32).default(4),
     turnTimeoutMs: z
       .number()

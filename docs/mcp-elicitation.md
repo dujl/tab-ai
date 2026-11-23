@@ -1,6 +1,6 @@
 # MCP 交互请求
 
-Codex app-server 的 `mcpServer/elicitation/request` 是 MCP 服务请求用户确认、填写表单或处理外部网页流程的原生协议。tab-ai 通过当前会话的交互系统展示请求、校验用户输入，并回传原生结果。
+Codex/TRAE CLI app-server 原生运行时发出 `mcpServer/elicitation/request` 时，表示 MCP 服务请求用户确认、填写表单或处理外部网页流程。tab-ai 通过当前会话的交互系统展示请求、校验用户输入，并回传原生结果。
 
 ## 支持的入口与行为
 
@@ -25,7 +25,7 @@ Codex app-server 的 `mcpServer/elicitation/request` 是 MCP 服务请求用户�
 
 ## 实现与排查
 
-- `src/agents/codex-elicitation.ts`：请求转换与原生结果；`src/agents/codex.ts`：原生作用域、结束通知和生命周期。
+- `src/agents/codex-elicitation.ts`：请求转换与原生结果；`src/agents/app-server.ts`：两个提供方共享的原生作用域、结束通知和生命周期。
 - `src/core/mcp-elicitation.ts`：schema 子集解析、输入校验及原生类型还原。
 - `src/core/interactions.ts`、`src/core/manager.ts`：统一验证、文字动作、超时与审计。
 - `src/channels/cards.ts`、`lark-cards.ts` 和 `src/web/public/app.js`：原聊天卡片、网页表单与终态。

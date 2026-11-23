@@ -125,7 +125,7 @@ test('IM and Web drive the same native sessions through nested mixed-Agent tasks
     await until(() => f.manager.interactions().length === 1);
     const pending = f.manager.interactions()[0]!;
     await until(() => cards.length === 1);
-    assert.equal(cards[0].message.route.thread, main.route.thread);
+    assert.equal(cards[0].message.route.thread, f.store.get(child.sessionId)!.route.thread);
     await post(`/sessions/${child.sessionId}/answer`, { id: pending.id, answer: { allow: true } });
     await f.manager.receive({
       ...mainMessage,
@@ -330,7 +330,10 @@ test('real runtime keeps authenticated Dashboard available when connector constr
     assert.equal(response.status, 200);
     const state = await response.json();
     assert.equal(state.channels[0].connection.state, 'error');
-    assert.equal(state.agentCatalog.length, 3);
+    assert.deepEqual(
+      state.agentCatalog.map((a: { id: string }) => a.id),
+      ['codex', 'claude', 'opencode', 'traecli'],
+    );
   } finally {
     await close?.();
     rmSync(dir, { recursive: true, force: true });

@@ -144,7 +144,10 @@ export class Store {
     this.unifiedTasks = hasUnifiedTaskModel(this.db);
     for (const session of this.list()) {
       // Recover an explicit native-policy choice from its audit event when the field is absent.
-      if (session.agent === 'codex' && session.approvalPolicy === undefined) {
+      if (
+        (session.agent === 'codex' || session.agent === 'traecli') &&
+        session.approvalPolicy === undefined
+      ) {
         const choice = this.db
           .prepare(
             "SELECT text FROM events WHERE session_id=? AND type='system' AND text LIKE '已修改本会话审批策略：%' ORDER BY id DESC LIMIT 1",
@@ -534,6 +537,8 @@ export class Store {
       if (previous.settings) fresh.settings = structuredClone(previous.settings);
       if (previous.codexDeveloperInstructions !== undefined)
         fresh.codexDeveloperInstructions = previous.codexDeveloperInstructions;
+      if (previous.traecliDeveloperInstructions !== undefined)
+        fresh.traecliDeveloperInstructions = previous.traecliDeveloperInstructions;
       if (previous.ownedTopicRoot) fresh.ownedTopicRoot = previous.ownedTopicRoot;
       this.save(fresh);
       this.save({ ...previous, status: 'closed' });

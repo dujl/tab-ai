@@ -3,7 +3,7 @@ import type { AgentPlan, Session } from './types.js';
 import type { Store, StoredEvent } from './store.js';
 
 export const agentPlanSchema = z.object({
-  source: z.enum(['codex', 'claude', 'opencode']),
+  source: z.enum(['codex', 'claude', 'opencode', 'traecli']),
   nativeTurnId: z.string().max(256).optional(),
   explanation: z.string().max(16000).optional(),
   steps: z
@@ -18,7 +18,7 @@ export const agentPlanSchema = z.object({
 });
 const runSchema = z.object({
   runId: z.string(),
-  agent: z.enum(['codex', 'claude', 'opencode']),
+  agent: z.enum(['codex', 'claude', 'opencode', 'traecli']),
   status: z.enum(['running', 'completed', 'failed', 'interrupted']),
   title: z.string(),
   startedAt: z.number(),

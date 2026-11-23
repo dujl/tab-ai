@@ -17,6 +17,7 @@ flowchart TD
   REP --> SUM[独立受限总结器]
   M --> AD[AgentAdapter]
   AD --> C[Codex app-server]
+  AD --> TC[TRAE CLI app-server]
   AD --> A[Claude Code SDK]
   AD --> O[OpenCode HTTP / SSE]
   AD --> H[公开输出 / 工具 / 审批 / 待办 hooks]
@@ -40,7 +41,7 @@ flowchart TD
 6. 分类服务暂不可用时普通工作继续原上下文；涉及管理修改仍要求明确命令。等待 10 秒、冷却 30 秒，不重复向普通工作输出管理识别错误。
 7. 工作请求启动/恢复当前 Session；编排输入进入 TaskJob。公开消息按顺序投递，最终结果不重复发送；未知投递不自动重跑 Agent。
 
-分类与总结使用不同受限实例，内部串行、无工具权限。Codex 每次新建 ephemeral thread，Claude 使用不持久化查询。两者使用 `topicRouterAgent`，默认按所选 Agent 推导为 Codex/Claude，不能配置为 OpenCode。
+分类与总结使用不同受限实例，内部串行、无工具权限。Codex 和 TRAE CLI 每次新建 ephemeral thread，Claude 使用不持久化查询。分类与总结使用 `topicRouterAgent`，可选 Codex/TRAE CLI/Claude；默认按执行者推导，不能配置为 OpenCode。
 
 ## 统一任务与独立 Session
 
@@ -55,18 +56,19 @@ Route 的 platform/account/conversation/thread/sender 共同隔离。Binding 选
 | Agent       | 执行与恢复                                                       | 管理能力                                                      |
 | ----------- | ---------------------------------------------------------------- | ------------------------------------------------------------- |
 | Codex       | app-server stdio；start/resume 同一 nativeId，turn/start         | 模型/思考、压缩、goal、待办、原生审批；会话授权时保留专属进程 |
+| TRAE CLI    | 原生 app-server stdio；start/resume 同一 nativeId，turn/start    | 模型/思考、压缩、待办、原生审批与终端交接；按原生能力处理扩展 |
 | Claude Code | SDK query；原生 preset + user/project/local 配置，resume 原生 ID | 模型、压缩、原生权限规则；待办按实际工具发现                  |
 | OpenCode    | 独立 loopback serve，随机认证，HTTP/SSE；按原生 ID 恢复          | 模型、压缩、待办、精确请求范围授权；每轮关闭服务              |
 
 同一 Session 同时只有一个工作/维护轮。原生历史与 app-server 进程是否持续存在是不同维度；默认逐轮恢复不会清空历史，也不保证或否定提供方的 prompt cache 命中。详见 [审批与上下文](session-approvals.md)。
 
-新 Codex 线程注册动态任务工具；恢复的非动态线程与其他后端使用会话专属 loopback MCP，服务身份统一为 `tab_ai_tasks`。端点按 Session 存续，授权只在当前有效轮生效，不暴露 Dashboard token。工具及范围见 [任务编排](task-orchestration.md)。
+新 Codex/TRAE CLI 线程注册动态任务工具；恢复的非动态线程与其他后端使用会话专属 loopback MCP，服务身份统一为 `tab_ai_tasks`。端点按 Session 存续，授权只在当前有效轮生效，不暴露 Dashboard token。工具及范围见 [任务编排](task-orchestration.md)。
 
 ## 上下文与工作目录
 
 原生指令、可信通道背景、显式会话附加指令组合传入适配器。群参考、任务简报、报告和版本索引作为资料附加；不会复制父/兄弟完整对话，也不输出私有推理。
 
-新节点继承直接父级目录，Agent 可显式选择。当前绑定的空闲节点在无排队输入时可改自身目录；已有历史要求适配器声明支持，目前 Codex/OpenCode 支持，Claude 未开放该迁移。其他节点目录、nativeId 和设置保留；不自动创建 worktree。
+新节点继承直接父级目录，Agent 可显式选择。当前绑定的空闲节点在无排队输入时可改自身目录；已有历史要求适配器声明支持，目前 Codex/TRAE CLI/OpenCode 支持，Claude 未开放该迁移。其他节点目录、nativeId 和设置保留；不自动创建 worktree。
 
 ## 调度、报告与恢复
 

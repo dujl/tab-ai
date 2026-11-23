@@ -1,3 +1,4 @@
+import { agentKindSchema } from './agent-kind.js';
 import { reportDraftSchema } from './report-model.js';
 import { z } from 'zod';
 import type { AgentKind, Route } from './types.js';
@@ -94,7 +95,7 @@ export const childTaskSchema = z
     objective: z.string().max(16000),
     criteria: z.string().min(1).max(4000),
     context: z.string().max(16000).default(''),
-    agent: z.enum(['codex', 'claude', 'opencode']).optional(),
+    agent: agentKindSchema.optional(),
     instructions: z.string().max(16000).optional(),
     workspaceMode: z
       .literal('shared')
@@ -114,7 +115,7 @@ export const rootTaskSchema = z
     title: z.string().min(1).max(60),
     objective: z.string().min(1).max(16000),
     criteria: z.string().max(4000).default('按用户目标完成并给出可核验的结果'),
-    agent: z.enum(['codex', 'claude', 'opencode']).optional(),
+    agent: agentKindSchema.optional(),
     workspace: z.string().min(1).max(4096).optional(),
   })
   .strict();

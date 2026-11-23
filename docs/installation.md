@@ -11,17 +11,34 @@ node --version
 npm --version
 ```
 
-真正执行任务还需要准备所选原生 Agent：Codex/OpenCode 使用其可执行文件，Claude Code 使用 SDK 原生运行时或配置指定命令；登录、Provider、模型额度由原生 Agent 负责。应在运行 tab-ai 的同一系统账号下完成登录。安装 tab-ai 不会自动购买额度、注册模型账号或迁移其他 Agent 的凭证。
+真正执行任务还需要准备所选原生 Agent：Codex/TRAE CLI/OpenCode 使用其可执行文件，Claude Code 使用 SDK 原生运行时或配置指定命令；登录、Provider、模型额度由原生 Agent 负责。应在运行 tab-ai 的同一系统账号下完成登录。安装 tab-ai 不会自动购买额度、注册模型账号或迁移其他 Agent 的凭证。TRAE CLI 的检查、登录与配置步骤见 [TRAE CLI 接入](traecli.md)。
 
 当前自动化重点覆盖 macOS/Linux；Windows 没有同等级验收记录。远程服务器不需要桌面，网页可通过 SSH 转发访问。
 
 ## 选择安装方式
+
+本指南描述当前源码。公共 npm 发布包、源码 checkout 和本地 tarball 是不同的安装来源，能力应按所用构建确认。公共 npm 的 `tab-ai@0.3.0` 尚未包含 TRAE CLI 对接；需要 TRAE CLI 时，使用包含该对接的源码或由它生成的安装包。源码与发布包可能具有相同版本号，`tab-ai --version` 不能单独证明代码相同。
+
+### 使用公共 npm 发布包
+
+```sh
+npm install --global tab-ai
+tab-ai --version
+tab-ai --help
+```
+
+升级或选择具体发布版本时先查看 `npm view tab-ai version`。安装完成后继续执行下面的初始化和服务启动步骤；npm 安装不会自动启动 Bot 接收进程。
 
 ### 从源码使用
 
 ```sh
 git clone https://github.com/dujl/tab-ai.git
 cd tab-ai
+```
+
+克隆后默认使用远端默认分支。使用尚未发布的功能时，先检出包含该功能的分支或提交，再安装和构建：
+
+```sh
 npm ci
 npm run build
 npm link --ignore-scripts
@@ -58,7 +75,7 @@ tab-ai --help
 
 PATH 设置只影响当前终端；长期使用可写入自己的 shell 配置。无需为使用 tab-ai 而用 sudo 运行 Agent。首次安装还会下载平台相关的 Agent SDK 二进制，耗时取决于网络；tarball 不是包含全部依赖的离线包。包内提供构建后的 CLI、网页、配置模板和 docs；全局安装文档位于 `$(npm root -g)/tab-ai/docs`，自定义前缀时用 `npm root -g --prefix "$HOME/.local"` 查询。
 
-本仓库说明不代表 tab-ai 已发布到公共 npm registry。没有确认发布来源和版本时，使用上述源码或明确来源的 tarball。
+本地 tarball 的内容取决于打包时的源码和构建结果；相同的 `tab-ai-0.3.0.tgz` 文件名不保证包含相同功能。安装包由提供者明确说明来源和能力，所用 Agent 应出现在 `tab-ai doctor` 检查列表中。
 
 ## 先运行只有网页的实例
 
@@ -78,6 +95,8 @@ tab-ai dashboard
 ```
 
 打开输出链接。新实例没有 Bot 时会显示接入向导，也可从界面进入 Tasks 创建本地任务。网页与 IM 都需要服务保持运行；终端 Ctrl+C 会停止这个服务。
+
+`init`、`setup` 和 `dashboard` 都不会自动留下持续运行的 Bot 服务。`dashboard` 只打印链接，已有 token 时也可能在服务停止后打印成功。需要长期使用 Bot 时，让 `serve` 持续运行或交给进程管理器，参见 [运行维护](operations.md)。
 
 默认配置 `~/.tab-ai/config.json`，数据 `~/.tab-ai/data`，HTTP 端口 4317。需要独立实例或不同目录时，在每条命令中使用同一个配置路径：
 
@@ -112,7 +131,7 @@ tab-ai -c /path/to/isolated/config.json dashboard
 tab-ai setup
 ```
 
-按平台授权和配对。已有服务时向导复用同一实例；未启动服务时可按终端向导完成后再 serve。飞书/企微/钉钉/微信的输入、卡片和附件能力不同，以 [通道说明](wechat-wecom.md) 和 [首次接入](onboarding.md) 为准。
+按平台授权和配对。已有服务时向导复用同一实例；未启动服务时，向导中的临时连接用于配对验证，完成后仍需启动 `tab-ai serve` 才能持续处理工作消息。飞书/企微/钉钉/微信的输入、卡片和附件能力不同，以 [通道说明](wechat-wecom.md) 和 [首次接入](onboarding.md) 为准。
 
 接入后，在与 Bot 的聊天中发送 `/tab menu` 查看本会话，群内默认可能需要 @。飞书群无需 @ 的 auto 模式还取决于平台消息权限。全局 `/tab admin` 仅 Manager Bot 的授权单聊提供，不应在群中寻找全局会话列表。
 

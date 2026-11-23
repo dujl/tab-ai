@@ -29,7 +29,7 @@ export class NativeTopicRouter implements TopicRouter {
   private tail: Promise<void> = Promise.resolve();
   private shutdown = new AbortController();
   constructor(
-    private kind: Extract<AgentKind, 'codex' | 'claude'>,
+    private kind: Extract<AgentKind, 'codex' | 'claude' | 'traecli'>,
     private command?: string,
     private secretKeys: string[] = [],
     private runtime: RouterRuntime = {},
@@ -83,7 +83,7 @@ export class NativeTopicRouter implements TopicRouter {
     try {
       combined.throwIfAborted();
       const result =
-        this.kind === 'codex'
+        this.kind !== 'claude'
           ? await this.codex(input, cwd, combined, instructions, schema)
           : await this.claude(input, cwd, combined, instructions, schema);
       return result;
@@ -101,7 +101,7 @@ export class NativeTopicRouter implements TopicRouter {
   ): Promise<unknown> {
     const initialize = !this.codexRpc;
     const rpc = (this.codexRpc ??= (this.runtime.rpc ?? ((...args) => new RpcProcess(...args)))(
-      this.command ?? 'codex',
+      this.command ?? this.kind,
       ['app-server'],
       tmpdir(),
       agentEnvironment(this.secretKeys),

@@ -1,3 +1,4 @@
+import { TraecliAdapter } from './agents/traecli.js';
 import { lockDirectory } from './instance-lock.js';
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -66,7 +67,12 @@ export async function serve(config: Config, configFile?: string): Promise<() => 
     }
     // Routing uses its own classifier; this never selects or overrides the requested work Agent.
     const routerAgent =
-      config.topicRouterAgent ?? (config.defaultAgent === 'claude' ? 'claude' : 'codex');
+      config.topicRouterAgent ??
+      (config.defaultAgent === 'claude'
+        ? 'claude'
+        : config.defaultAgent === 'traecli'
+          ? 'traecli'
+          : 'codex');
     const reportWriter = new NativeTopicRouter(
       routerAgent,
       config.agents[routerAgent].command,
@@ -76,6 +82,7 @@ export async function serve(config: Config, configFile?: string): Promise<() => 
       config,
       store,
       {
+        traecli: new TraecliAdapter(config.agents.traecli.command, keys),
         codex: new CodexAdapter(config.agents.codex.command, keys),
         claude: new ClaudeAdapter(config.agents.claude.command, keys),
         opencode: new OpenCodeAdapter(config.agents.opencode.command, keys),

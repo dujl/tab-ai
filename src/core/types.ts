@@ -1,17 +1,19 @@
 import type { GroupPermission } from './group-mode.js';
 export type Platform = 'lark' | 'dingtalk' | 'wecom' | 'wechat' | 'local';
-export type AgentKind = 'codex' | 'claude' | 'opencode';
+export type AgentKind = 'codex' | 'claude' | 'opencode' | 'traecli';
 export const agentNames: Record<AgentKind, string> = {
   codex: 'Codex',
+  traecli: 'TRAE CLI',
   claude: 'Claude Code',
   opencode: 'OpenCode',
 };
 export function agentKind(name: string): AgentKind {
   const normalized = name.toLowerCase().replace(/[\s_-]/g, '');
+  if (['traecli', 'traexcli', 'traex'].includes(normalized)) return 'traecli';
   if (normalized === 'codex' || normalized === 'opencode') return normalized;
   if (normalized === 'claude' || normalized === 'claudecode') return 'claude';
   throw new Error(
-    `不支持指定的 Agent「${name}」。可选 codex / claude / opencode；未创建会话，也不会改用默认 Agent。`,
+    `不支持指定的 Agent「${name}」。可选 codex / claude / opencode / traecli；未创建会话，也不会改用默认 Agent。`,
   );
 }
 export interface Route {
@@ -101,6 +103,8 @@ export interface Session {
   };
   codexDeveloperInstructions?: string;
   codexTaskTools?: 'dynamic' | 'mcp';
+  traecliDeveloperInstructions?: string;
+  traecliTaskTools?: 'dynamic' | 'mcp';
   taskToolsEnabled?: boolean;
   imEntry?: { state: 'pending' | 'unknown'; detail: string };
   approvalPolicy?: string;
@@ -129,7 +133,7 @@ export interface Interaction {
   sessionId: string;
   kind: 'approval' | 'question';
   // Set only by the trusted adapter for native command/file approval callbacks.
-  approvalAutomation?: 'codex-command-file';
+  approvalAutomation?: 'codex-command-file' | 'traecli-command-file';
   title: string;
   detail: string;
   approvalOptions?: {
@@ -176,7 +180,7 @@ export interface AgentHooks {
     text: string;
     instructions?: string;
     nativeId?: string;
-    instructionMode?: 'codex-developer' | 'claude-append' | 'opencode-system';
+    instructionMode?: 'traecli-developer' | 'codex-developer' | 'claude-append' | 'opencode-system';
   }): void;
   nativeId(id: string): void;
   text(text: string): void;
@@ -263,10 +267,12 @@ export interface NativeLoop {
 }
 export interface AgentSettings {
   model: string;
+  provider?: string;
   effort?: string;
 }
 export interface AgentModel {
   id: string;
+  provider?: string;
   label: string;
   efforts: { id: string; label: string }[];
   defaultEffort?: string;

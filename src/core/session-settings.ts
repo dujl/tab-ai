@@ -8,7 +8,11 @@ import {
 } from './types.js';
 
 export const agentSettingsSchema = z
-  .object({ model: z.string().min(1).max(256), effort: z.string().min(1).max(80).optional() })
+  .object({
+    model: z.string().min(1).max(256),
+    effort: z.string().min(1).max(80).optional(),
+    provider: z.string().min(1).max(256).optional(),
+  })
   .strict();
 const modelsSchema = z
   .array(
@@ -17,6 +21,7 @@ const modelsSchema = z
       label: z.string().min(1).max(300),
       efforts: z.array(z.object({ id: z.string().min(1).max(80), label: z.string().max(500) })),
       defaultEffort: z.string().optional(),
+      provider: z.string().min(1).max(256).optional(),
     }),
   )
   .max(500);
@@ -96,7 +101,9 @@ export class SessionSettings {
         : settings.effort !== undefined
     )
       throw new Error('请选择该模型支持的思考深度。');
-    session.settings = settings;
+    if (settings.provider !== undefined && settings.provider !== model.provider)
+      throw new Error('模型 Provider 不属于当前原生目录选项。');
+    session.settings = { ...settings, ...(model.provider ? { provider: model.provider } : {}) };
     session.settingsRevision = revision + 1;
     this.store.save(session);
     // Settings are not conversation events and never become user/assistant input.

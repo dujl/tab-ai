@@ -4,11 +4,11 @@
 
 ## 任务与会话
 
-Tasks、Agents、Bots 分别表示工作、执行者与聊天入口。Task 管目标、父子关系、队列、依赖、进度及验收；Session 管原生上下文、模型、目录、审批和执行状态。网页与 IM 操作同一 sessionId；同一节点最多一个原生执行轮。不同节点可以选择 Codex、Claude Code 或 OpenCode，完整对话不自动复制到其他节点。
+Tasks、Agents、Bots 分别表示工作、执行者与聊天入口。Task 管目标、父子关系、队列、依赖、进度及验收；Session 管原生上下文、模型、目录、审批和执行状态。网页与 IM 操作同一 sessionId；同一节点最多一个原生执行轮。不同节点可以选择 Codex、TRAE CLI、Claude Code 或 OpenCode，完整对话不自动复制到其他节点。
 
 统一任务目录投影 Session 与 TaskRecord。使用任务工具或新增编排子任务时，框架按当前绑定和授权范围登记任务能力，保留原生上下文与导航标识；查看目录本身不会启动工作。登记和报告映射规则见 [数据模型](database.md#任务记录登记)。
 
-任务工具注册在会话专属 loopback MCP 上，只有原 Session 的当前有效、未停止执行轮能调用；接口无全局管理令牌，不能操作无关任务。会话内地址稳定以兼容原生连接复用，服务关闭后失效。Codex 创建线程时注册动态工具；恢复未注册动态工具的线程时，通过 `thread/resume.config` 的独立 `mcp_servers.tab_ai_tasks` 配置接入，不修改共享配置文件。协议参考：[官方 App Server](https://learn.chatgpt.com/docs/app-server)。
+任务工具注册在会话专属 loopback MCP 上，只有原 Session 的当前有效、未停止执行轮能调用；接口无全局管理令牌，不能操作无关任务。会话内地址稳定以兼容原生连接复用，服务关闭后失效。Codex 和 TRAE CLI 创建线程时注册动态工具；恢复未注册动态工具的线程时，通过 `thread/resume.config` 的独立 `mcp_servers.tab_ai_tasks` 配置接入，不修改共享配置文件。Codex 协议参考：[官方 App Server](https://learn.chatgpt.com/docs/app-server)。
 
 ## 两个入口的共同操作
 

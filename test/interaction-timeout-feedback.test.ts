@@ -199,7 +199,7 @@ test('async question expiry notifies without stopping the background analysis or
   }
 });
 
-test('child approval timeout notice follows the approval to the root task topic', async () => {
+test('child approval timeout notice stays in the originating child topic', async () => {
   const f = fixture();
   f.config.interactionTimeoutMs = 35;
   Object.assign(f.channel, { sendInteraction: async () => ({ close: async () => {} }) });
@@ -230,9 +230,9 @@ test('child approval timeout notice follows the approval to the root task topic'
     await f.manager.idle();
     const notices = f.channel.sent.filter((m) => m.text.includes('审批已超时'));
     assert.equal(notices.length, 1);
-    assert.equal(notices[0]!.message.route.thread, root.route.thread);
+    assert.equal(notices[0]!.message.route.thread, f.store.get(child.sessionId!)!.route.thread);
     const event = f.store.events(child.sessionId!).find((e) => e.type === 'interaction_timeout')!;
-    assert.equal(JSON.parse(event.text).notificationSessionId, root.sessionId);
+    assert.equal(JSON.parse(event.text).notificationSessionId, child.sessionId);
   } finally {
     await f.cleanup();
   }

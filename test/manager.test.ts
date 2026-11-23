@@ -28,11 +28,11 @@ test('real Feishu root/reply envelopes retain native sessions and keep topics se
   };
   try {
     for (const input of [
-      message('om-a', undefined, '/tab new'),
-      message('om-b', undefined, '新开一个 session'),
-      message('om-a1', 'om-a'),
-      message('om-b1', 'om-b'),
-      message('om-a2', 'om-a'),
+      message('om_a', undefined, '/tab new'),
+      message('om_b', undefined, '新开一个 session'),
+      message('om_a1', 'om_a'),
+      message('om_b1', 'om_b'),
+      message('om_a2', 'om_a'),
     ]) {
       await f.manager.receive(input);
       await f.manager.idle();
@@ -40,14 +40,14 @@ test('real Feishu root/reply envelopes retain native sessions and keep topics se
     assert.equal(f.store.list().length, 2);
     assert.deepEqual(
       f.agent.inputs.map((i) => i.session.nativeId),
-      ['native-om-a', 'native-om-b', 'native-om-a'],
+      ['native-om_a', 'native-om_b', 'native-om_a'],
     );
     assert.deepEqual(
       f.channel.sent.map((s) => s.message.replyTo),
-      ['om-a', 'om-b', 'om-a', 'om-b', 'om-a'],
+      ['om_a', 'om_b', 'om_a', 'om_b', 'om_a'],
     );
-    const b = f.store.current(message('om-b1', 'om-b').route)!;
-    await f.manager.receive(message('om-command', 'om-a', `/tab use ${b.id}`));
+    const b = f.store.current(message('om_b1', 'om_b').route)!;
+    await f.manager.receive(message('om_command', 'om_a', `/tab use ${b.id}`));
     assert.match(f.channel.sent.at(-1)!.text, /不属于/);
   } finally {
     await f.cleanup();

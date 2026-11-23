@@ -1,3 +1,4 @@
+import { agentKindSchema } from '../core/agent-kind.js';
 import { executionRecords } from '../core/execution-records.js';
 import { agentPlans } from '../core/agent-plans.js';
 import { groupModeInput, groupModePermissionHint } from '../core/group-mode.js';
@@ -345,7 +346,7 @@ export function createDashboard(manager: Manager, token: string, setup?: SetupSe
       if (request.method === 'POST' && path === '/api/sessions') {
         const data = z
           .object({
-            agent: z.enum(['codex', 'claude', 'opencode']),
+            agent: agentKindSchema,
             workspace: z.string(),
             instructions: instructionsSchema.optional(),
           })
