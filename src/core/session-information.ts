@@ -12,6 +12,7 @@ export function sessionInformation(session: Session): SessionInformation {
     medium: '中',
     high: '高',
     xhigh: '极高',
+    max: '最高',
   };
   const shortPolicies: Record<string, string> = {
     native: '原生配置',
@@ -20,6 +21,9 @@ export function sessionInformation(session: Session): SessionInformation {
     never: '不询问·未授权拒绝',
     default: '原生默认',
     acceptEdits: '自动允许编辑',
+    'accept-edits': '自动允许编辑',
+    auto: '原生自动模式',
+    plan: '规划模式',
     dontAsk: '不询问·未授权拒绝',
   };
   const effortText = effort

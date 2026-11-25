@@ -141,6 +141,7 @@ program
     console.log(`Node ${process.version}; workspaces: ${Object.keys(c.workspaces).join(', ')}`);
     for (const [agent, command] of [
       ['traecli', c.agents.traecli.command],
+      ['agy', c.agents.agy.command],
       ['codex', c.agents.codex.command],
       ['claude', c.agents.claude.command ?? 'claude'],
       ['opencode', c.agents.opencode.command],

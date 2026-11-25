@@ -132,3 +132,71 @@ export function openCodeUsage(info: unknown): AgentUsage | undefined {
     contextKind: 'last-call',
   };
 }
+
+const agyContextSchema = z.object({
+  used: count,
+  size: count.positive().optional(),
+});
+const agyPromptUsageSchema = z
+  .object({
+    inputTokens: count.optional(),
+    input_tokens: count.optional(),
+    outputTokens: count.optional(),
+    output_tokens: count.optional(),
+    cachedReadTokens: count.optional(),
+    cache_read_tokens: count.optional(),
+    cachedWriteTokens: count.optional(),
+    cache_write_tokens: count.optional(),
+    thoughtTokens: count.optional(),
+    thinking_tokens: count.optional(),
+    totalTokens: count.optional(),
+    total_tokens: count.optional(),
+  })
+  .passthrough();
+
+export function agyContextUsage(update: unknown): AgentUsage | undefined {
+  const parsed = agyContextSchema.safeParse(update);
+  if (!parsed.success) return;
+  return {
+    source: 'agy',
+    contextTokens: parsed.data.used,
+    contextKind: 'native',
+    ...(parsed.data.size ? { modelContextWindow: parsed.data.size } : {}),
+  };
+}
+
+export function agyUsage(
+  usage: unknown,
+  context?: { contextTokens?: number; modelContextWindow?: number },
+): AgentUsage | undefined {
+  const parsed = agyPromptUsageSchema.safeParse(usage);
+  if (!parsed.success) return;
+  const v = parsed.data;
+  const input = v.inputTokens ?? v.input_tokens;
+  const output = v.outputTokens ?? v.output_tokens;
+  if (input === undefined || output === undefined) return;
+  const cached = v.cachedReadTokens ?? v.cache_read_tokens ?? 0;
+  const cacheWrite = v.cachedWriteTokens ?? v.cache_write_tokens;
+  const thought = v.thoughtTokens ?? v.thinking_tokens;
+  const total = v.totalTokens ?? v.total_tokens;
+  const totalOutput = thought !== undefined && output < thought ? output + thought : output;
+  const last: TokenBreakdown = {
+    inputTokens: input,
+    cachedInputTokens: Math.min(cached, input),
+    outputTokens: totalOutput,
+    ...(cacheWrite === undefined ? {} : { cacheWriteInputTokens: cacheWrite }),
+    ...(thought === undefined ? {} : { reasoningOutputTokens: thought }),
+    ...(total === undefined ? {} : { totalTokens: total }),
+  };
+  return {
+    source: 'agy',
+    last,
+    ...(context?.contextTokens === undefined
+      ? {
+          contextTokens: input + (cacheWrite ?? 0) + totalOutput,
+          contextKind: 'last-call' as const,
+        }
+      : { contextTokens: context.contextTokens, contextKind: 'native' as const }),
+    ...(context?.modelContextWindow ? { modelContextWindow: context.modelContextWindow } : {}),
+  };
+}

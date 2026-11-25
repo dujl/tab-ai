@@ -16,13 +16,21 @@ export class RpcProcess {
   private sequence = 0;
   private pending = new Map<
     number,
-    { resolve(v: unknown): void; reject(e: Error): void; timer: NodeJS.Timeout }
+    { resolve(v: unknown): void; reject(e: Error): void; timer?: NodeJS.Timeout }
   >();
   private closed = false;
   private diagnostics = '';
+  private jsonrpc?: '2.0';
   onMessage: (message: RpcMessage) => void = () => {};
   onFailure: (error: Error) => void = () => {};
-  constructor(command: string, args: string[], cwd: string, env: NodeJS.ProcessEnv) {
+  constructor(
+    command: string,
+    args: string[],
+    cwd: string,
+    env: NodeJS.ProcessEnv,
+    options: { jsonrpc?: '2.0' } = {},
+  ) {
+    this.jsonrpc = options.jsonrpc;
     this.child = spawn(command, args, { cwd, env, stdio: 'pipe', shell: false });
     this.child.stderr.on('data', (chunk) => {
       this.diagnostics = (this.diagnostics + String(chunk)).slice(-4000);
@@ -34,6 +42,7 @@ export class RpcProcess {
     );
     const reader = createInterface({ input: this.child.stdout });
     reader.on('line', (line) => {
+      if (!line.trim()) return;
       try {
         const message = envelope.parse(JSON.parse(line));
         if (typeof message.id === 'number' && !message.method) {
@@ -69,21 +78,25 @@ export class RpcProcess {
   }
   write(message: object): void {
     if (this.closed) throw new Error('Agent 连接已经关闭');
-    this.child.stdin.write(JSON.stringify(message) + '\n');
+    const payload = this.jsonrpc ? { jsonrpc: this.jsonrpc, ...message } : message;
+    this.child.stdin.write(JSON.stringify(payload) + '\n');
   }
-  request(method: string, params: unknown): Promise<unknown> {
+  request(method: string, params: unknown, timeoutMs = 30_000): Promise<unknown> {
     if (this.closed) return Promise.reject(new Error('Agent 连接已经关闭'));
     const id = ++this.sequence;
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.pending.delete(id);
-        reject(new Error(`Agent 请求超时: ${method}`));
-      }, 30_000);
+      const timer =
+        timeoutMs > 0
+          ? setTimeout(() => {
+              this.pending.delete(id);
+              reject(new Error(`Agent 请求超时: ${method}`));
+            }, timeoutMs)
+          : undefined;
       this.pending.set(id, { resolve, reject, timer });
       try {
         this.write({ id, method, params });
       } catch (error) {
-        clearTimeout(timer);
+        if (timer) clearTimeout(timer);
         this.pending.delete(id);
         reject(error);
       }

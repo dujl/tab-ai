@@ -10,7 +10,8 @@
     "codex": { "command": "codex" },
     "claude": {},
     "opencode": { "command": "opencode" },
-    "traecli": { "command": "traecli" }
+    "traecli": { "command": "traecli" },
+    "agy": { "command": "agy" }
   },
   "maxConcurrentRuns": 4,
   "turnTimeoutMs": 1800000,

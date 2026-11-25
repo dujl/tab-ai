@@ -274,7 +274,9 @@ export function approvalPresentation(
       [labels.cwd!, '会话默认目录', '执行命令', '原内容', '新内容', '内容'].includes(
         section.label,
       ) ||
-      (section.label === '文件路径' && typeof data.file_path === 'string')
+      !section.value.trim() ||
+      (section.label === '文件路径' && typeof data.file_path === 'string') ||
+      (section.label === '操作说明' && (section.value === command || section.value === tool))
     )
       continue;
     facts.push({
@@ -282,15 +284,26 @@ export function approvalPresentation(
         section.label === '申请原因' || section.label === '操作说明'
           ? `Agent ${section.label}`
           : section.label,
-      value: compact(section.value),
+      value: compact(section.value, 100),
     });
   }
-  const priorities = ['额外权限', '网络访问', '授权目录', '权限类型', '授权匹配范围'];
+  const priorities = [
+    '额外权限',
+    '网络访问',
+    '授权目录',
+    '权限类型',
+    '授权匹配范围',
+    '执行器',
+    '命令含网址',
+    '命令预览',
+    '文件路径',
+  ];
   const primary = facts.filter(
     (f) => [labels.cwd!, '会话默认目录'].includes(f.label) || priorities.includes(f.label),
   );
   const secondary = facts.filter((f) => !primary.includes(f));
-  const visibleFacts = [...primary, ...secondary].slice(0, 10);
+  const limit = Math.max(6, primary.length);
+  const visibleFacts = [...primary, ...secondary].slice(0, limit);
   if (facts.length > visibleFacts.length)
     visibleFacts.push({
       label: '其他参数',

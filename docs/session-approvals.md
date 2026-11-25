@@ -24,12 +24,13 @@ Dashboard 对话工具栏也直接提供 **审批策略**；飞书首页的 **�
 
 本机 HTTP 端口测试即使文件位于可写工作区内，也可能受原生网络沙箱限制。`UV_CACHE_DIR` 等环境变量赋值与测试执行器在审批摘要中分开识别；摘要不改变原始命令、授权范围或原生决定。相关边界见 [OpenAI 官方审批说明](https://learn.chatgpt.com/docs/agent-approvals-security)。
 
-| Agent       | 本会话策略                                                               | 单次审批                                                                       |
-| ----------- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------ |
-| Codex       | native、untrusted、on-request、on-request-auto-review、auto-allow、never | 按原生 availableDecisions 提供对应选项；命令及文件请求可显式开启本会话自动允许 |
-| TRAE CLI    | native、untrusted、on-request、on-request-auto-review、auto-allow、never | 按原生 availableDecisions 提供对应选项；命令及文件请求可显式开启本会话自动允许 |
-| Claude Code | native、default、acceptEdits、dontAsk                                    | 本次允许；原生提供完整可支持的 allow 规则建议时提供本会话允许；拒绝/取消       |
-| OpenCode    | 沿用原生配置                                                             | 本次允许、相同请求范围在本会话允许、拒绝                                       |
+| Agent           | 本会话策略                                                               | 单次审批                                                                       |
+| --------------- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------ |
+| Codex           | native、untrusted、on-request、on-request-auto-review、auto-allow、never | 按原生 availableDecisions 提供对应选项；命令及文件请求可显式开启本会话自动允许 |
+| TRAE CLI        | native、untrusted、on-request、on-request-auto-review、auto-allow、never | 按原生 availableDecisions 提供对应选项；命令及文件请求可显式开启本会话自动允许 |
+| Antigravity CLI | native、default、accept-edits、auto、plan                                | 本次允许、相同请求范围在本会话允许、拒绝、取消                                 |
+| Claude Code     | native、default、acceptEdits、dontAsk                                    | 本次允许；原生提供完整可支持的 allow 规则建议时提供本会话允许；拒绝/取消       |
+| OpenCode        | 沿用原生配置                                                             | 本次允许、相同请求范围在本会话允许、拒绝                                       |
 
 `never/dontAsk` 表示不弹审批、权限不足时不批准，不等于全权限。`untrusted` 仍由当前 Codex 或 TRAE CLI 原生 Agent 判断可信命令，不把它标作“所有工具每次必问”。不支持的策略或选项明确拒绝。保持 `native` 时不添加覆盖参数。
 
@@ -46,6 +47,8 @@ Codex CLI 0.163.0 的协议列出 `untrusted`、`on-request`、`never` 和分类
 **Claude Code**：只接入原生完整的 `addRules + allow` 建议，目的地强制为 `session`；不接受以此按钮修改模式、移除拒绝规则或写入 settings 文件。后续轮次将同一 session 已授予的规则通过 SDK `allowedTools` 重加，由原生权限引擎匹配。若请求仍进入回调（例如强制询问、组织要求），继续询问用户，不用框架缓存跳过。没有可适配规则时只提供本次允许。
 
 **OpenCode**：不同版本的原生 `always` 可能保存项目规则。本框架不回传 `always`，而将权限类型与完整 patterns 集合保存在当前 tab-ai session 的内存中；相同请求范围再次出现时回传 `once`。不做命令前缀或通配符的自行扩大匹配，不写入项目授权。复用会在原会话活动记录中说明。
+
+**Antigravity CLI**：通过 ACP `session/request_permission` 展示审批请求；选择“本会话允许”时仅在当前 tab-ai Session 内存中保存精确的 tool/input/locations 范围并回传原生单次允许，不写入全局用户设置、不跨会话共享；“取消”回传 ACP `cancelled` 结果。模式策略（`default`、`accept-edits`、`auto`、`plan`）通过 ACP `session/set_config_option` 或 `session/set_mode` 下发。
 
 ## 交互与审计
 

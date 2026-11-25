@@ -108,6 +108,30 @@ export function approvalModes(
         description: '未预先授权的操作拒绝执行，不代表允许所有工具。',
       },
     ];
+  if (agent === 'agy')
+    return [
+      native,
+      {
+        id: 'default',
+        label: '原生默认审批',
+        description: '由 Antigravity CLI 按原生规则在修改文件和执行命令前申请确认。',
+      },
+      {
+        id: 'accept-edits',
+        label: '自动允许文件编辑',
+        description: '自动批准工作区内的文件修改，执行终端命令仍按原生规则询问确认。',
+      },
+      {
+        id: 'auto',
+        label: '原生自动模式',
+        description: '在 Antigravity CLI 原生沙箱与策略内自动处理常规操作，高风险操作仍询问确认。',
+      },
+      {
+        id: 'plan',
+        label: '规划模式',
+        description: '优先调研与制定实现方案，执行实际修改前先确认。',
+      },
+    ];
   return [native];
 }
 

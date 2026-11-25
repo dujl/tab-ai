@@ -40,7 +40,10 @@ const schema = z
     defaultAgent: agentKindSchema.default('codex'),
     defaultInstructions: instructionsSchema.optional(),
     handoffInlineLimit: z.number().int().min(1).max(1000).optional(),
-    topicRouterAgent: agentKindSchema.pipe(z.enum(['codex', 'claude', 'traecli'])).optional(),
+    topicRouterAgent: agentKindSchema
+      .pipe(z.enum(['codex', 'claude', 'traecli', 'agy']))
+      .optional(),
+    topicRouterModel: z.string().trim().min(1).max(256).optional(),
     defaultWorkspace: z.string().default('default'),
     workspaces: z.record(z.string(), z.string()).refine((v) => Object.keys(v).length > 0),
     agents: z
@@ -48,6 +51,7 @@ const schema = z
         traecli: z
           .object({ command: z.string().default('traecli') })
           .default({ command: 'traecli' }),
+        agy: z.object({ command: z.string().default('agy') }).default({ command: 'agy' }),
         codex: z.object({ command: z.string().default('codex') }).default({ command: 'codex' }),
         claude: z.object({ command: z.string().optional() }).default({}),
         opencode: z
@@ -59,6 +63,7 @@ const schema = z
         claude: {},
         opencode: { command: 'opencode' },
         traecli: { command: 'traecli' },
+        agy: { command: 'agy' },
       }),
     maxConcurrentRuns: z.number().int().min(1).max(32).default(4),
     turnTimeoutMs: z

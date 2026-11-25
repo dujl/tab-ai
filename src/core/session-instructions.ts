@@ -17,9 +17,11 @@ export function creationOptions(text: string): { args: string[]; instructions?: 
   const head = match ? text.slice(0, match.index) : text;
   const args = head.trim().split(/\s+/).slice(2);
   if (/^trae$/i.test(args[0] ?? '') && /^cli$/i.test(args[1] ?? '')) args.splice(0, 2, 'TRAE CLI');
+  if (/^(?:agy|antigravity)$/i.test(args[0] ?? '') && /^cli$/i.test(args[1] ?? ''))
+    args.splice(0, 2, `${args[0]} CLI`);
   if (args.length > 2 || args.some((arg) => arg.startsWith('--')))
     throw new Error(
-      '用法：/tab new [codex|claude|opencode|traecli] [工作区] --instructions 附加指令',
+      '用法：/tab new [codex|claude|opencode|traecli|agy] [工作区] --instructions 附加指令',
     );
   return {
     args,

@@ -288,7 +288,7 @@ test('task catalog and native Agent capabilities require authentication, preserv
     }).then((r) => r.json())) as any;
     assert.deepEqual(
       state.agentCatalog.map((a: { id: string }) => a.id),
-      ['codex', 'claude', 'opencode', 'traecli'],
+      ['codex', 'claude', 'opencode', 'traecli', 'agy'],
     );
     assert.equal(state.channels[0].id, 'test-lark');
     assert.ok(!JSON.stringify(state.agentCatalog).includes('TEST_APP_SECRET'));

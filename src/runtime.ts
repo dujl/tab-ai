@@ -1,4 +1,5 @@
 import { TraecliAdapter } from './agents/traecli.js';
+import { AgyAdapter } from './agents/agy.js';
 import { lockDirectory } from './instance-lock.js';
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -72,23 +73,28 @@ export async function serve(config: Config, configFile?: string): Promise<() => 
         ? 'claude'
         : config.defaultAgent === 'traecli'
           ? 'traecli'
-          : 'codex');
+          : config.defaultAgent === 'agy'
+            ? 'agy'
+            : 'codex');
+    const routerOptions = config.topicRouterModel ? { model: config.topicRouterModel } : {};
     const reportWriter = new NativeTopicRouter(
       routerAgent,
       config.agents[routerAgent].command,
       keys,
+      routerOptions,
     );
     manager = new Manager(
       config,
       store,
       {
         traecli: new TraecliAdapter(config.agents.traecli.command, keys),
+        agy: new AgyAdapter(config.agents.agy.command, keys),
         codex: new CodexAdapter(config.agents.codex.command, keys),
         claude: new ClaudeAdapter(config.agents.claude.command, keys),
         opencode: new OpenCodeAdapter(config.agents.opencode.command, keys),
       },
       channels,
-      new NativeTopicRouter(routerAgent, config.agents[routerAgent].command, keys),
+      new NativeTopicRouter(routerAgent, config.agents[routerAgent].command, keys, routerOptions),
       configFile ? (id, role) => new SetupStorage(configFile).setManager(id, role) : undefined,
       configFile
         ? (id, chat, mode) => new SetupStorage(configFile).setGroupMode(id, chat, mode)

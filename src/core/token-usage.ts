@@ -10,7 +10,7 @@ export const tokenBreakdownSchema = z.object({
   reasoningOutputTokens: count.optional(),
 });
 export const agentUsageSchema = z.object({
-  source: z.enum(['codex', 'claude', 'opencode', 'traecli']),
+  source: z.enum(['codex', 'claude', 'opencode', 'traecli', 'agy']),
   last: tokenBreakdownSchema.optional(),
   total: tokenBreakdownSchema.optional(),
   totalScope: z.enum(['session', 'query']).optional(),

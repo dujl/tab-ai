@@ -12,12 +12,12 @@ Every task evolves. Any agent runs it (Codex, OpenCode, Claude Code…); any bot
 
 - **网页优先**：统一查看任务树、等待输入的节点、对话、审批、工具记录和交付报告。
 - **聊天优先**：在飞书等入口发起任务，用平台支持的卡片、按钮或文字命令处理管理与审批。
-- **按节点选 Agent**：Codex、TRAE CLI、Claude Code、OpenCode 使用各自原生能力，不要求整棵任务树采用同一种 Agent。
+- **按节点选 Agent**：Codex、TRAE CLI、Antigravity CLI、Claude Code、OpenCode 使用各自原生能力，不要求整棵任务树采用同一种 Agent。
 
 ## 工作模型
 
 - **Task**：目标、父子关系、依赖、进展、验收与交付。没有子任务也是任务；子任务可以继续拆分。
-- **Agent**：Codex、TRAE CLI、Claude Code、OpenCode。每个任务节点可独立选择执行者，使用各自原生历史和工具能力。
+- **Agent**：Codex、TRAE CLI、Antigravity CLI、Claude Code、OpenCode。每个任务节点可独立选择执行者，使用各自原生历史和工具能力。
 - **Bot**：飞书/Lark、企业微信、钉钉、个人微信的连接实例，负责消息收发与交互。
 - **Session**：任务内部的原生对话上下文，保存原生 ID、目录、模型和审批状态。目标完成与会话空闲、关闭分别管理。
 
@@ -38,7 +38,7 @@ flowchart TD
 
 ## 快速开始
 
-需要 Node.js **22.16+**，并在运行服务的系统账号下完成所用 Agent 的原生登录。TRAE CLI 的配置与启动步骤见 [TRAE CLI 接入](docs/traecli.md)。
+需要 Node.js **22.16+**，并在运行服务的系统账号下完成所用 Agent 的原生登录。TRAE CLI 的配置与启动步骤见 [TRAE CLI 接入](docs/traecli.md)，Antigravity CLI 的接入见 [Antigravity CLI 接入](docs/agy.md)。
 
 ```sh
 npm ci
@@ -119,7 +119,7 @@ tab-ai serve
 
 ## 原生上下文与权限
 
-Codex 和 TRAE CLI 使用各自的 app-server，Claude Code 使用 SDK 原生 preset，OpenCode 使用独立 loopback HTTP/SSE 服务。保留原生登录、项目指令、模型配置与工具权限，按 Session 组合通道背景和显式附加指令。Codex 和 TRAE CLI 默认审批策略为 `on-request`，可在本会话选择其他已适配策略；单次/会话内允许按原生请求实际能力展示，不跨 Session 授权。
+Codex 和 TRAE CLI 使用各自的 app-server，Antigravity CLI 使用原生 ACP（`agy acp`），Claude Code 使用 SDK 原生 preset，OpenCode 使用独立 loopback HTTP/SSE 服务。保留原生登录、项目指令、模型配置与工具权限，按 Session 组合通道背景和显式附加指令。Codex 和 TRAE CLI 默认审批策略为 `on-request`，可在本会话选择其他已适配策略；单次/会话内允许按原生请求实际能力展示，不跨 Session 授权。
 
 目录切换保留同一原生 ID；已有历史时仅对明确支持的适配器开放。重置与压缩是不同操作，原生终端交接使用 `tab-ai native <管理ID>`。原生 ID 与框架管理 ID 不可混用。详见 [会话审批](docs/session-approvals.md) 与 [会话管理](docs/session-management.md)。
 
