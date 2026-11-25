@@ -315,24 +315,140 @@ test('task catalog and native Agent capabilities require authentication, preserv
   }
 });
 
-test('session child API cannot silently ignore a different workspace under an orchestrated parent', async () => {
+test('session child API and dashboard child creation inherit parent config by default and apply explicit overrides', async () => {
   const f = fixture();
   try {
-    const parent = f.store.create(incoming('').route, 'codex', f.dir);
+    const parent = f.store.create(incoming('').route, 'claude', f.dir);
     f.manager.tasks.adoptSession(parent.id);
     const other = join(f.dir, 'other-child-dir');
     mkdirSync(other);
+    const inherited = await f.manager.createChildSession(parent.id, {
+      key: 'inherited',
+      title: '继承默认配置',
+    });
+    assert.equal(inherited.workspace, f.dir);
+    assert.equal(inherited.agent, 'claude');
+    assert.equal(f.store.taskRecord(inherited.taskId!)!.workspace, f.dir);
+    const overridden = await f.manager.createChildSession(parent.id, {
+      key: 'explicit-directory',
+      title: '显式目录子任务',
+      agent: 'agy',
+      workspace: other,
+    });
+    assert.equal(overridden.workspace, other);
+    assert.equal(overridden.agent, 'agy');
+    assert.equal(f.store.taskRecord(overridden.taskId!)!.workspace, other);
+    assert.equal(f.store.get(parent.id)!.workspace, f.dir);
+    assert.equal(f.store.get(parent.id)!.agent, 'claude');
+
+    const dashChild = await f.manager.createDashboardTask(
+      { key: 'dash-override', title: '网页显式目录', agent: 'agy', workspace: other },
+      `session:${parent.id}`,
+    );
+    assert.equal(dashChild.workspace, other);
+    assert.equal(dashChild.agent, 'agy');
+    assert.equal(f.store.get(dashChild.sessionId!)!.workspace, other);
+
     const before = f.store.taskRecords().length;
     await assert.rejects(
       f.manager.createChildSession(parent.id, {
-        key: 'wrong-directory',
-        title: '子任务',
-        workspace: other,
+        key: 'invalid-directory',
+        title: '无效目录',
+        workspace: join(f.dir, 'missing-dir'),
       }),
-      /继承直接父级目录/,
+      /工作目录不存在/,
+    );
+    await assert.rejects(
+      f.manager.createDashboardTask(
+        { key: 'dash-invalid', title: '无效目录', workspace: join(f.dir, 'missing-dir') },
+        `session:${parent.id}`,
+      ),
+      /工作目录不存在/,
     );
     assert.equal(f.store.taskRecords().length, before);
     assert.equal(f.agent.inputs.length, 0);
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test('natural language new_topic and /tab new in a task session inherit parent config by default and start with explicit agent and workspace', async () => {
+  const other = 'client-workspace';
+  const third = 'third-workspace';
+  let decisionWorkspace: string | null = null;
+  let decisionAgent: string | null = null;
+  let decisionTask: string | null = null;
+  const f = fixture({
+    async classify() {
+      return {
+        action: 'new_topic',
+        agent: decisionAgent,
+        workspace: decisionWorkspace,
+        task: decisionTask,
+        instructions: null,
+      };
+    },
+  });
+  try {
+    const dirB = join(f.dir, other);
+    const dirC = join(f.dir, third);
+    mkdirSync(dirB);
+    mkdirSync(dirC);
+    f.config.workspaces.client = dirB;
+
+    const parent = f.store.create(incoming('', 'alice', '').route, 'claude', f.dir);
+    f.manager.tasks.adoptSession(parent.id);
+
+    decisionAgent = 'agy cli';
+    decisionWorkspace = dirB;
+    decisionTask = '开发客户端功能';
+    await f.manager.receive(
+      incoming(`新开一个会话，使用 agy cli 在 ${dirB} 中开发客户端功能`, 'alice', ''),
+    );
+    await until(() => f.agent.inputs.length === 1);
+    await f.manager.idle();
+    const run = f.agent.inputs[0]!;
+    assert.equal(run.session.agent, 'agy');
+    assert.equal(run.session.workspace, dirB);
+    assert.match(run.text, /开发客户端功能/);
+    const childTask = f.store.taskRecord(run.session.taskId!)!;
+    assert.equal(childTask.parentId, parent.id);
+    assert.equal(childTask.workspace, dirB);
+    assert.equal(childTask.agent, 'agy');
+    assert.equal(f.store.get(parent.id)!.workspace, f.dir);
+    assert.equal(f.store.get(parent.id)!.agent, 'claude');
+
+    // Default inheritance: omitting agent & workspace inherits direct parent's agent and workspace.
+    await f.manager.receive(incoming('/tab new', 'alice', ''));
+    await f.manager.idle();
+    const inherited = f.store
+      .list()
+      .find(
+        (s) => s.id !== parent.id && s.id !== run.session.id && s.parentSessionId === parent.id,
+      )!;
+    assert.equal(inherited.agent, 'claude');
+    assert.equal(inherited.workspace, f.dir);
+
+    // Explicit /tab new override inside a task session uses the requested agent & workspace.
+    await f.manager.receive(incoming(`/tab new agy ${dirC}`, 'alice', ''));
+    await f.manager.idle();
+    const explicitSlash = f.store.list().find((s) => s.workspace === dirC)!;
+    assert.equal(explicitSlash.agent, 'agy');
+    assert.equal(explicitSlash.parentSessionId, parent.id);
+
+    // Direct tasks.createChild (MCP task_create) accepts explicit preset alias or path.
+    const mcpChild = await f.manager.tasks.createChild(parent.id, {
+      key: 'mcp-custom-ws',
+      title: '客户端子任务',
+      objective: '实现客户端入口',
+      criteria: '测试通过',
+      agent: 'agy',
+      workspace: 'client',
+      start: false,
+    });
+    assert.equal(mcpChild.workspace, dirB);
+    assert.equal(mcpChild.agent, 'agy');
+    assert.equal(f.store.get(mcpChild.sessionId!)!.workspace, dirB);
   } finally {
     await f.cleanup();
   }
