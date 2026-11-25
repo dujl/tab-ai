@@ -3,6 +3,7 @@ import {
   sessionDisplayTitle,
   createExecutionRecords,
   createAgentPlans,
+  createTokenUsage,
   showReportDocument,
 } from '/dashboard.js';
 const $ = (id) => document.getElementById(id);
@@ -126,6 +127,7 @@ function select(id, taskId, options) {
     renderState();
     renderInteractions();
     consoleUI.render(state);
+    tokenUsageUI.refresh($('token-usage-panel').hidden ? undefined : selected);
   }
   void refresh();
 }
@@ -632,6 +634,7 @@ $('approval-policy-form').onsubmit = (e) => {
 $('approval-policy-revoke').onclick = () => void saveApprovalPolicy(true);
 const executionRecordsUI = createExecutionRecords({ api, showError });
 const agentPlansUI = createAgentPlans({ api });
+const tokenUsageUI = createTokenUsage({ api });
 async function refresh() {
   if (!token || polling) return;
   polling = true;
@@ -641,6 +644,7 @@ async function refresh() {
     renderState();
     renderInteractions();
     consoleUI.render(state);
+    tokenUsageUI.refresh($('token-usage-panel').hidden ? undefined : selected);
     if (!$('agent-plans-panel').hidden) agentPlansUI.refresh(selected);
     else agentPlansUI.hide();
     const recordsVisible = !$('records-panel').hidden;
@@ -716,6 +720,7 @@ $('composer').onsubmit = (event) => {
       if (state) {
         renderState();
         consoleUI.render(state);
+        tokenUsageUI.refresh($('token-usage-panel').hidden ? undefined : selected);
       }
     }
   })();

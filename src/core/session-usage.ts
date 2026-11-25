@@ -1,11 +1,12 @@
 import { agentUsageSchema, currentUsage } from './token-usage.js';
 import { readCompaction } from './maintenance-diagnostics.js';
 import type { Store } from './store.js';
-import type { AgentAdapter, AgentKind, Session } from './types.js';
+import type { AgentAdapter, AgentKind, NativeUsageSnapshot, Session } from './types.js';
 
 // Presentation overlay only: reading statistics never changes session recency,
 // management revisions, bindings, history or task state.
 export class SessionUsage {
+  private cached = new Map<string, NativeUsageSnapshot>();
   constructor(
     private store: Store,
     private agents: Record<AgentKind, AgentAdapter>,
@@ -15,8 +16,22 @@ export class SessionUsage {
     try {
       historical = this.agents[session.agent].historicalUsage?.(session);
     } catch {
-      return session;
+      return this.peek(session);
     }
+    const result = this.apply(session, historical);
+    if (historical && result !== session) {
+      this.cached.delete(session.id);
+      this.cached.set(session.id, historical);
+      if (this.cached.size > 500) this.cached.delete(this.cached.keys().next().value!);
+    }
+    return result;
+  }
+  // Lists may reuse an already verified observation, but never scan native
+  // files for every row. Applying it to the current session rechecks identity.
+  peek(session: Session): Session {
+    return this.apply(session, this.cached.get(session.id));
+  }
+  private apply(session: Session, historical?: NativeUsageSnapshot): Session {
     if (
       !historical ||
       historical.nativeId !== session.nativeId ||

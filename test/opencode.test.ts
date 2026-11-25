@@ -8,6 +8,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { OpenCodeAdapter } from '../src/agents/opencode.js';
 import { OpenCodeServer } from '../src/agents/opencode-server.js';
 import { type AgentRun, type Interaction, type Session } from '../src/core/types.js';
+import type { AgentUsage } from '../src/core/types.js';
 import { sessionIdentity } from '../src/core/session-identity.js';
 
 function fixture(mode = 'normal') {
@@ -72,6 +73,30 @@ function fixture(mode = 'normal') {
     cleanup: () => rmSync(dir, { recursive: true, force: true }),
   };
 }
+test('OpenCode reconciles every model message of the current prompt and replaces duplicate SSE snapshots with a verified turn total', async () => {
+  const f = fixture('usage'),
+    values: AgentUsage[] = [];
+  try {
+    f.run.hooks.usage = (value) => values.push(value);
+    await f.adapter.run(f.run);
+    assert.ok(values.some((v) => v.sampleId === 'msg_first'));
+    assert.ok(!values.some((v) => ['foreign', 'child'].includes(v.sampleId ?? '')));
+    const final = values.at(-1)!;
+    assert.equal(final.totalScope, 'query');
+    assert.equal(final.complete, true);
+    assert.equal(final.total!.inputTokens, 460);
+    assert.equal(final.total!.outputTokens, 24);
+    assert.equal(final.total!.cachedInputTokens, 160);
+    assert.equal(final.total!.cacheWriteInputTokens, 10);
+    assert.equal(final.total!.reasoningOutputTokens, 4);
+    assert.equal(
+      f.requests().filter((r) => r.path.endsWith('/message') && r.method === 'GET').length,
+      1,
+    );
+  } finally {
+    f.cleanup();
+  }
+});
 test('OpenCode starts its native server, creates/resumes native IDs and sends only the exact task and explicit native settings', async () => {
   const f = fixture();
   try {

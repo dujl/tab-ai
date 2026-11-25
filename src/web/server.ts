@@ -1,5 +1,6 @@
 import { agentKindSchema } from '../core/agent-kind.js';
 import { executionRecords } from '../core/execution-records.js';
+import { usageBreakdown } from '../core/token-usage.js';
 import { agentPlans } from '../core/agent-plans.js';
 import { groupModeInput, groupModePermissionHint } from '../core/group-mode.js';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
@@ -315,6 +316,7 @@ export function createDashboard(manager: Manager, token: string, setup?: SetupSe
       if (request.method === 'GET' && path === '/api/state')
         return json(response, 200, {
           sessions: manager.store.list(),
+          sessionUsage: manager.usageSummaries(),
           tasks: manager.store.taskRecords(),
           interactions: manager.interactions(),
           sessionReportStates: manager.store.reports.statuses(),
@@ -322,6 +324,7 @@ export function createDashboard(manager: Manager, token: string, setup?: SetupSe
           taskNodes: manager.taskCatalog(),
           agentCatalog: manager.agentCatalog(),
           executionRecords: true,
+          tokenUsage: true,
           scopedApprovals: true,
           mcpElicitation: true,
           dualEntryTasks: true,
@@ -369,13 +372,31 @@ export function createDashboard(manager: Manager, token: string, setup?: SetupSe
         return json(response, 201, session);
       }
       const match =
-        /^\/api\/sessions\/([^/]+)\/(events|records|todos|approval-policy|messages|begin|stop|answer|detach|attach|close|open|settings|replace-workspace|maintenance|compact|loops|loop-stop|reset|im-entry)$/.exec(
+        /^\/api\/sessions\/([^/]+)\/(events|records|usage|todos|approval-policy|messages|begin|stop|answer|detach|attach|close|open|settings|replace-workspace|maintenance|compact|loops|loop-stop|reset|im-entry)$/.exec(
           path,
         );
       if (match) {
         const id = match[1]!;
         if (!manager.store.get(id)) return json(response, 404, { error: '会话不存在' });
         const action = match[2];
+        if (request.method === 'GET' && action === 'usage') {
+          const params = new URL(request.url!, 'http://localhost').searchParams;
+          const query = z
+            .object({
+              before: z.coerce.number().int().positive().optional(),
+              limit: z.coerce.number().int().min(1).max(50).default(20),
+            })
+            .parse(Object.fromEntries(params));
+          const page = manager.store.usage.list(id, query.before, query.limit);
+          return json(response, 200, {
+            tokenInformation: manager.usageInformation(id, true)!,
+            ...page,
+            runs: page.runs.map((run) => ({
+              ...run,
+              information: run.value ? usageBreakdown(run.value, run.agent) : undefined,
+            })),
+          });
+        }
         if (request.method === 'GET' && action === 'todos') {
           const params = new URL(request.url!, 'http://localhost').searchParams,
             query = z
@@ -458,6 +479,7 @@ export function createDashboard(manager: Manager, token: string, setup?: SetupSe
               query,
               manager.interactions(),
               manager.usageSession(id),
+              manager.usageInformation(id),
             ),
           );
         }

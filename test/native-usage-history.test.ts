@@ -146,6 +146,12 @@ test('presentation enrichment respects fresher live samples, reset identity and 
     });
     const historical = service.enrich(n.session);
     assert.equal(historical.tokenUsage?.value.contextTokens, 20000);
+    adapter.historicalUsage = () => {
+      throw Error('list must not access native files');
+    };
+    assert.equal(service.peek(n.session).tokenUsage?.value.contextTokens, 20000);
+    assert.equal(service.peek({ ...n.session, nativeId: 'other' }).tokenUsage, undefined);
+    adapter.historicalUsage = (s) => n.reader.read(s);
     assert.equal(n.session.tokenUsage, undefined);
     const live: Session = {
       ...n.session,
@@ -215,7 +221,7 @@ test('old-session menu and web maintenance/records show native usage without mod
     const address = server.address() as any,
       headers = { Authorization: 'Bearer test-token' },
       base = `http://127.0.0.1:${address.port}/api/sessions/${n.session.id}`;
-    for (const endpoint of ['/maintenance', '/records?kind=tools']) {
+    for (const endpoint of ['/maintenance', '/records?kind=tools', '/usage']) {
       const response = await fetch(base + endpoint, { headers });
       assert.equal(response.status, 200);
       const data = await response.json();
@@ -232,6 +238,10 @@ test('old-session menu and web maintenance/records show native usage without mod
       }),
     );
     assert.match(JSON.stringify(nativeCard), /102,000/);
+    const state = (await fetch(`http://127.0.0.1:${address.port}/api/state`, { headers }).then(
+      (r) => r.json(),
+    )) as any;
+    assert.equal(state.sessionUsage[n.session.id].cumulative.total, '102,000');
     assert.equal(f.manager.maintenanceInfo(n.session.id).revision, revision);
     assert.deepEqual(f.store.get(n.session.id), before);
     assert.equal(f.store.events(n.session.id).length, eventsBefore);

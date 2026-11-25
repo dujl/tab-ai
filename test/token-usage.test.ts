@@ -143,7 +143,7 @@ test('Claude compaction uses native boundary counts and preserves query pipeline
     assert.equal(result.contextBefore, 80000);
     assert.equal(result.usage?.contextTokens, 12000);
     assert.equal(result.usage?.total?.inputTokens, 80000);
-    assert.equal(result.usage?.totalScope, 'query');
+    assert.equal(result.usage?.totalScope, 'pipeline');
   } finally {
     await f.cleanup();
   }
@@ -205,6 +205,33 @@ test('successful compaction persists actual before/after counts while cumulative
     );
     assert.match(f.manager.maintenanceInfo(s.id).lastCompaction!.detail, /压缩已完成/);
     assert.equal(f.manager.maintenanceInfo(s.id).lastCompaction!.tokens?.after, 20000);
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test('a new cumulative sample does not refresh the older context timestamp or borrow a new round value', async () => {
+  const f = fixture();
+  try {
+    const s = seed(f);
+    s.tokenUsage!.at = 2000;
+    s.tokenUsage!.contextAt = 1000;
+    f.store.save(s);
+    f.agent.handler = async ({ hooks }) => {
+      hooks.nativeId('native-1');
+      hooks.usage?.({
+        source: 'codex',
+        totalScope: 'session',
+        total: { inputTokens: 300000, outputTokens: 2000, cachedInputTokens: 50000 },
+      });
+    };
+    await f.manager.receive(incoming('继续'));
+    await f.manager.idle();
+    const current = f.store.get(s.id)!;
+    assert.equal(current.tokenUsage!.contextAt, 1000);
+    assert.ok(current.tokenUsage!.totalAt! > 2000);
+    assert.equal(usageInformation(current).contextAt, 1000);
+    assert.equal(usageInformation(current).currentRound.input, '101,000');
   } finally {
     await f.cleanup();
   }

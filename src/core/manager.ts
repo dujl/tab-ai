@@ -3,6 +3,8 @@ import { SessionUsage } from './session-usage.js';
 import { sessionInformation } from './session-information.js';
 import {
   agentUsageSchema,
+  archiveSessionUsage,
+  computeSubtreeUsageMap,
   currentUsage,
   compactionTokensText,
   usageInformation,
@@ -197,6 +199,7 @@ export class Manager {
   private pending = new Map<string, Pending>();
   private interactionJobs = new Set<Promise<void>>();
   private closing = false;
+  private usageRefreshTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private closedSessions = new Set<string>();
   private routingAbort = new AbortController();
   private receiving = new Map<string, Promise<void>>();
@@ -322,7 +325,7 @@ export class Manager {
       settings: this.settings,
       workspaces: config.workspaces,
       taskBoard: (id) => this.tasks.board(id),
-      information: (s) => sessionInformation(this.usage.enrich(s)),
+      information: (s) => sessionInformation(this.usage.enrich(s), this.usageInformation(s.id)),
       pendingCount: (id) => this.interactions().filter((r) => r.sessionId === id).length,
     });
     for (const channel of channels.values()) {
@@ -970,7 +973,30 @@ export class Manager {
         this.controls.refresh(session.id);
     }
   }
-  private recordUsage(session: Session, value: AgentUsage): void {
+  private beginUsage(id: string, runId: string, kind: 'turn' | 'compact'): void {
+    const current = this.store.get(id)!;
+    const baseline = currentUsage(this.usage.enrich(current));
+    this.store.atomic(() => {
+      this.store.usage.begin(current, runId, kind, baseline);
+      this.store.save(current);
+    });
+  }
+  private finishUsage(
+    id: string,
+    runId: string,
+    status: 'completed' | 'failed' | 'interrupted',
+  ): void {
+    this.store.atomic(() => {
+      const current = this.store.get(id)!;
+      this.store.usage.finish(current, runId, status);
+      this.store.save(current);
+    });
+    const timer = this.usageRefreshTimers.get(id);
+    if (timer) clearTimeout(timer);
+    this.usageRefreshTimers.delete(id);
+    this.controls.refresh(id);
+  }
+  private recordUsage(session: Session, value: AgentUsage, runId: string): void {
     const parsed = agentUsageSchema.safeParse(value),
       current = this.store.get(session.id);
     if (
@@ -983,19 +1009,51 @@ export class Manager {
       return;
     const previous = currentUsage(current);
     const merged = { ...previous, ...parsed.data };
-    if (parsed.data.contextTokens !== undefined && parsed.data.modelContextWindow === undefined)
+    if (
+      (parsed.data.contextTokens !== undefined ||
+        (parsed.data.source === 'claude' && parsed.data.total)) &&
+      parsed.data.modelContextWindow === undefined
+    )
       delete merged.modelContextWindow;
-    current.tokenUsage = { nativeId: session.nativeId, at: Date.now(), value: merged };
+    const at = Date.now();
+    current.tokenUsage = {
+      nativeId: session.nativeId,
+      at,
+      value: merged,
+      contextAt:
+        parsed.data.contextTokens === undefined
+          ? (current.tokenUsage?.contextAt ??
+            (previous?.contextTokens === undefined ? undefined : current.tokenUsage?.at))
+          : at,
+      totalAt:
+        parsed.data.total === undefined
+          ? (current.tokenUsage?.totalAt ?? (previous?.total ? current.tokenUsage?.at : undefined))
+          : at,
+      lastAt:
+        parsed.data.last === undefined
+          ? (current.tokenUsage?.lastAt ?? (previous?.last ? current.tokenUsage?.at : undefined))
+          : at,
+    };
     if (parsed.data.contextTokens !== undefined) delete current.contextUsageInvalidated;
-    this.store.save(current);
+    this.store.atomic(() => {
+      this.store.usage.record(current, parsed.data, runId);
+      this.store.save(current);
+      this.store.event(
+        session.id,
+        'usage',
+        JSON.stringify({ ...parsed.data, runId, nativeId: session.nativeId }),
+      );
+    });
     session.tokenUsage = current.tokenUsage;
     session.contextUsageInvalidated = current.contextUsageInvalidated;
-    this.store.event(
-      session.id,
-      'usage',
-      JSON.stringify({ ...current.tokenUsage.value, nativeId: session.nativeId }),
-    );
-    this.controls.refresh(session.id);
+    session.tokenLedger = current.tokenLedger;
+    if (!this.usageRefreshTimers.has(session.id)) {
+      const timer = setTimeout(() => {
+        this.usageRefreshTimers.delete(session.id);
+        this.controls.refresh(session.id);
+      }, 5000).unref();
+      this.usageRefreshTimers.set(session.id, timer);
+    }
   }
   private save(session: Session): void {
     const current = this.store.get(session.id);
@@ -1003,6 +1061,8 @@ export class Manager {
       for (const key of [
         'taskId',
         'tokenUsage',
+        'tokenLedger',
+        'archivedTokenUsage',
         'contextUsageInvalidated',
         'lastCompactionTokens',
         'approvalPolicy',
@@ -1976,6 +2036,7 @@ export class Manager {
     };
     session.status = 'running';
     this.save(session);
+    this.beginUsage(session.id, run.runId, 'turn');
     const userEvent = this.store.event(
       session.id,
       message.topicUpdateId ? 'topic_summary_input' : 'user',
@@ -2091,8 +2152,14 @@ export class Manager {
             );
           },
           nativeId: (id) => {
-            session.nativeId = id;
-            this.save(session);
+            this.store.atomic(() => {
+              session.nativeId = id;
+              this.save(session);
+              const current = this.store.get(session.id)!;
+              this.store.usage.bind(current, run.runId);
+              this.store.save(current);
+              session.tokenLedger = current.tokenLedger;
+            });
             this.controls.refresh(session.id);
           },
           text: (text) => {
@@ -2107,7 +2174,7 @@ export class Manager {
             this.store.event(session.id, 'activity', text);
           },
           usage: (value) => {
-            if (!controller.signal.aborted) this.recordUsage(session, value);
+            if (!controller.signal.aborted) this.recordUsage(session, value, run.runId);
           },
           tool: (event) => {
             this.store.event(
@@ -2224,6 +2291,15 @@ export class Manager {
     } finally {
       clearTimeout(timer);
       this.topicDraftHandlers.delete(session.id);
+      this.finishUsage(
+        session.id,
+        run.runId,
+        controller.signal.aborted
+          ? 'interrupted'
+          : session.status === 'error'
+            ? 'failed'
+            : 'completed',
+      );
       this.store.event(
         session.id,
         'agent_run',
@@ -2397,7 +2473,10 @@ export class Manager {
       adminAvailable,
     );
     if (scope === 'session' && viewSession && action !== 'inspect')
-      view.information = sessionInformation(this.usage.enrich(viewSession));
+      view.information = sessionInformation(
+        this.usage.enrich(viewSession),
+        this.usageInformation(viewSession.id),
+      );
     if (action === 'compact' && deliveryStage !== 'confirmation' && deliveryStage !== 'management')
       view.tone =
         deliveryStage === 'completed' ? 'green' : deliveryStage === 'failed' ? 'red' : 'orange';
@@ -2934,8 +3013,10 @@ export class Manager {
     if (current.taskId) {
       const latest = this.store.get(id)!;
       const nativeId = latest.nativeId;
+      latest.archivedTokenUsage = archiveSessionUsage(this.usage.enrich(latest));
       delete latest.nativeId;
       delete latest.tokenUsage;
+      delete latest.tokenLedger;
       delete latest.contextUsageInvalidated;
       delete latest.lastCompactionTokens;
       delete latest.codexTaskTools;
@@ -2981,6 +3062,29 @@ export class Manager {
     const session = this.store.get(id);
     return session ? this.usage.enrich(session) : undefined;
   }
+  usageInformation(id: string, includeChildren = false) {
+    const session = this.store.get(id);
+    if (!session) return undefined;
+    const enriched = this.usage.enrich(session);
+    const sessionsById = new Map(
+      this.store.list().map((s) => [s.id, s.id === id ? enriched : this.usage.peek(s)]),
+    );
+    const subtree = computeSubtreeUsageMap(this.taskCatalog(), sessionsById, includeChildren).get(
+      id,
+    );
+    return usageInformation(enriched, subtree);
+  }
+  usageSummaries() {
+    const sessions = this.store.list().map((s) => this.usage.peek(s));
+    const sessionsById = new Map(sessions.map((s) => [s.id, s]));
+    const subtreeMap = computeSubtreeUsageMap(this.taskCatalog(), sessionsById, false);
+    return Object.fromEntries(
+      sessions.map((session) => [
+        session.id,
+        usageInformation(session, subtreeMap.get(session.id)),
+      ]),
+    );
+  }
   maintenanceInfo(id: string) {
     const session = this.store.get(id);
     if (!session) throw new Error('会话不存在');
@@ -2993,7 +3097,7 @@ export class Manager {
       busy: this.active.has(id) || this.downloading.has(id),
       operation: session.operation,
       tokenUsage: currentUsage(usageSession),
-      tokenInformation: usageInformation(usageSession),
+      tokenInformation: this.usageInformation(id)!,
       lastCompaction: readCompaction(this.store.latestEvent(id, 'compaction')?.text),
       canControlNativeLoops: !!adapter.loops && !!adapter.stopLoop,
       revision: managementRevision(
@@ -3040,9 +3144,10 @@ export class Manager {
       this.store.event(id, 'compaction', JSON.stringify(operation));
     };
     record();
+    this.beginUsage(id, operation.id, 'compact');
     session.operation = 'compact';
     if (previous !== 'closed') session.status = 'running';
-    this.store.save(session);
+    this.save(session);
     this.active.set(id, entry);
     this.controls.refresh(id);
     const message = notification ?? { id: randomUUID(), text: '', route: session.route };
@@ -3075,7 +3180,7 @@ export class Manager {
         invoked = true;
         const result = await adapter.compact!(structuredClone(session), controller.signal);
         controller.signal.throwIfAborted();
-        if (result.usage) this.recordUsage(this.store.get(id)!, result.usage);
+        if (result.usage) this.recordUsage(this.store.get(id)!, result.usage, operation.id);
         if (result.compacted) {
           operation.tokens = {
             nativeId: session.nativeId!,
@@ -3121,6 +3226,15 @@ export class Manager {
         text = `${operation.detail}\n不会自动重试；会话 ID 和框架历史保留。`;
       } finally {
         clearTimeout(timer);
+        this.finishUsage(
+          id,
+          operation.id,
+          operation.phase === 'completed' || operation.phase === 'noop'
+            ? 'completed'
+            : operation.phase === 'unconfirmed'
+              ? 'interrupted'
+              : 'failed',
+        );
         const latest = this.store.get(id)!;
         if (invoked && operation.phase === 'unconfirmed') {
           latest.contextUsageInvalidated = true;
@@ -4657,6 +4771,8 @@ export class Manager {
   }
   async close(): Promise<void> {
     this.closing = true;
+    for (const timer of this.usageRefreshTimers.values()) clearTimeout(timer);
+    this.usageRefreshTimers.clear();
     this.topics.close();
     await this.tasks.close();
     this.routingAbort.abort(new Error('服务正在关闭'));
