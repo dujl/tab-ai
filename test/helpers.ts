@@ -85,6 +85,7 @@ export function fixture(
       claude: {},
       opencode: { command: 'opencode' },
       traecli: { command: 'traecli' },
+      agy: { command: 'agy' },
     },
     maxConcurrentRuns: 2,
     turnTimeoutMs: 5000,
@@ -107,7 +108,7 @@ export function fixture(
   const manager = new Manager(
     config,
     store,
-    { codex: agent, claude: agent, opencode: agent, traecli: agent },
+    { codex: agent, claude: agent, opencode: agent, traecli: agent, agy: agent },
     new Map([[channel.id, channel]]),
     router,
   );

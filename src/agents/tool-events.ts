@@ -113,3 +113,74 @@ export function openCodeTool(
     },
   };
 }
+
+function acpContentText(content: unknown): string | undefined {
+  if (!Array.isArray(content)) return undefined;
+  const parts: string[] = [];
+  for (const item of content) {
+    const entry = object(item);
+    if (!entry) continue;
+    if (entry.type === 'text' && typeof entry.text === 'string') parts.push(entry.text);
+    else if (entry.type === 'content') {
+      const inner = object(entry.content);
+      if (inner?.type === 'text' && typeof inner.text === 'string') parts.push(inner.text);
+    } else if (entry.type === 'diff' && typeof entry.path === 'string')
+      parts.push(`diff: ${entry.path}`);
+  }
+  return parts.length ? parts.join('\n') : undefined;
+}
+
+export function acpTool(
+  value: unknown,
+  prior?: { name: string; input?: string },
+): ToolActivity | undefined {
+  const update = object(value);
+  if (!update || typeof update.toolCallId !== 'string') return;
+  const kindNames: Record<string, string> = {
+    read: '读取文件',
+    edit: '修改文件',
+    delete: '删除文件',
+    move: '移动文件',
+    search: '搜索内容',
+    execute: '执行命令',
+    think: '推理分析',
+    fetch: '网络请求',
+    other: '调用工具',
+  };
+  const name =
+    (typeof update.title === 'string' && update.title.trim()) ||
+    prior?.name ||
+    (typeof update.kind === 'string' ? (kindNames[update.kind] ?? update.kind) : '调用工具');
+  const rawInput = object(update.rawInput);
+  const input =
+    update.rawInput !== undefined
+      ? toolText(rawInput?.command ?? rawInput?.CommandLine ?? update.rawInput)
+      : prior?.input;
+  const rawOutput = object(update.rawOutput);
+  const exitCode =
+    typeof rawOutput?.exitCode === 'number'
+      ? rawOutput.exitCode
+      : typeof rawOutput?.exit_code === 'number'
+        ? rawOutput.exit_code
+        : undefined;
+  const output =
+    update.rawOutput !== undefined ? toolText(update.rawOutput) : acpContentText(update.content);
+  const status: ToolActivity['status'] =
+    update.status === 'completed'
+      ? exitCode !== undefined && exitCode !== 0
+        ? 'failed'
+        : 'completed'
+      : update.status === 'failed' || update.status === 'error'
+        ? 'failed'
+        : update.status === 'cancelled'
+          ? 'interrupted'
+          : 'running';
+  return {
+    id: update.toolCallId,
+    name,
+    status,
+    ...(input !== undefined ? { input } : {}),
+    ...(output !== undefined ? { output } : {}),
+    ...(exitCode !== undefined ? { exitCode } : {}),
+  };
+}

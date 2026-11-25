@@ -332,7 +332,7 @@ test('real runtime keeps authenticated Dashboard available when connector constr
     assert.equal(state.channels[0].connection.state, 'error');
     assert.deepEqual(
       state.agentCatalog.map((a: { id: string }) => a.id),
-      ['codex', 'claude', 'opencode', 'traecli'],
+      ['codex', 'claude', 'opencode', 'traecli', 'agy'],
     );
   } finally {
     await close?.();

@@ -2,18 +2,19 @@
 
 从安装与接入开始，按任务协作、会话管理和运行维护查找操作指南；开发接口与架构说明单独列出。
 
-| 主题           | 文档                                                                                                                                                                    |
-| -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 产品概念与入口 | [命名](branding.md)、[设计原则](design-principles.md)                                                                                                                   |
-| 安装与接入     | [从源码或包开始](installation.md)、[配置](configuration.md)、[首次接入](onboarding.md)、[微信与企微](wechat-wecom.md)                                                   |
-| 任务与协作     | [任务编排](task-orchestration.md)、[Web/IM 双入口](dual-entry-tasks.md)、[交付与经验](session-reports.md)                                                               |
-| 界面           | [Dashboard](dashboard.md)、[任务结构](unified-tasks-and-structure.md)、[树形投影](session-tree-design.md)                                                               |
-| 会话与管理     | [使用手册](sessions-guide.md)、[会话控制](session-management.md)、[跨通道菜单](management-cards.md)                                                                     |
-| Bot 与群聊     | [角色、授权与群模式](bot-management.md)                                                                                                                                 |
-| TRAE CLI       | [TRAE CLI 接入与运行](traecli.md)                                                                                                                                       |
-| 执行与交互     | [审批策略](session-approvals.md)、[审批/提问适配](chat-interactions.md)、[MCP 表单](mcp-elicitation.md)、[执行记录](execution-records.md)、[Agent 待办](agent-plans.md) |
-| 开发           | [架构](architecture.md)、[数据库](database.md)、[API](api.md)、[功能与限制](capabilities.md)、[贡献](../CONTRIBUTING.md)、[测试](testing.md)                            |
-| 运行与验证     | [运维](operations.md)、[验收](acceptance.md)、[排错](troubleshooting.md)、[安全](../SECURITY.md)                                                                        |
+| 主题            | 文档                                                                                                                                                                    |
+| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 产品概念与入口  | [命名](branding.md)、[设计原则](design-principles.md)                                                                                                                   |
+| 安装与接入      | [从源码或包开始](installation.md)、[配置](configuration.md)、[首次接入](onboarding.md)、[微信与企微](wechat-wecom.md)                                                   |
+| 任务与协作      | [任务编排](task-orchestration.md)、[Web/IM 双入口](dual-entry-tasks.md)、[交付与经验](session-reports.md)                                                               |
+| 界面            | [Dashboard](dashboard.md)、[任务结构](unified-tasks-and-structure.md)、[树形投影](session-tree-design.md)                                                               |
+| 会话与管理      | [使用手册](sessions-guide.md)、[会话控制](session-management.md)、[跨通道菜单](management-cards.md)                                                                     |
+| Bot 与群聊      | [角色、授权与群模式](bot-management.md)                                                                                                                                 |
+| TRAE CLI        | [TRAE CLI 接入与运行](traecli.md)                                                                                                                                       |
+| Antigravity CLI | [Antigravity CLI 接入与运行](agy.md)                                                                                                                                    |
+| 执行与交互      | [审批策略](session-approvals.md)、[审批/提问适配](chat-interactions.md)、[MCP 表单](mcp-elicitation.md)、[执行记录](execution-records.md)、[Agent 待办](agent-plans.md) |
+| 开发            | [架构](architecture.md)、[数据库](database.md)、[API](api.md)、[功能与限制](capabilities.md)、[贡献](../CONTRIBUTING.md)、[测试](testing.md)                            |
+| 运行与验证      | [运维](operations.md)、[验收](acceptance.md)、[排错](troubleshooting.md)、[安全](../SECURITY.md)                                                                        |
 
 ## 核心概念
 

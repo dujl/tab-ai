@@ -164,3 +164,61 @@ test('Claude classifier has no work-session resume, tools or persistence and val
   assert.equal(closed, true);
   assert.equal(existsSync(options.cwd!), false);
 });
+
+test('TRAE CLI classifier resolves configured model displayName to configName and modelProvider', async () => {
+  const calls: { method: string; params: any }[] = [];
+  const rpc = {
+    onMessage: (_: RpcMessage) => {},
+    onFailure: (_: Error) => {},
+    write(_message: object) {},
+    async close() {},
+    async request(method: string, params: any): Promise<unknown> {
+      calls.push({ method, params });
+      if (method === 'config/read') return { config: {} };
+      if (method === 'model/list')
+        return {
+          data: [
+            {
+              model: 'Router-Fast',
+              configName: 'router-fast',
+              modelProviderId: 'native-provider',
+              displayName: 'Router-Fast',
+            },
+          ],
+        };
+      if (method === 'thread/start') return { thread: { id: 'ephemeral-trae' } };
+      if (method === 'turn/start') {
+        rpc.onMessage({
+          method: 'item/completed',
+          params: {
+            item: {
+              type: 'agentMessage',
+              text: '{"action":"new_topic","workspace":null,"instructions":null,"agent":null,"task":null}',
+            },
+          },
+        });
+        rpc.onMessage({ method: 'turn/completed', params: { turn: { status: 'completed' } } });
+      }
+      return {};
+    },
+  };
+  const router = new NativeTopicRouter('traecli', 'traex', [], {
+    model: 'Router-Fast',
+    rpc: () => rpc,
+  });
+  try {
+    const decision = await router.classify(
+      { text: '新开一个会话', recentUserMessages: [] },
+      new AbortController().signal,
+    );
+    assert.equal(decision.action, 'new_topic');
+    const start = calls.find((c) => c.method === 'thread/start')!.params;
+    const turn = calls.find((c) => c.method === 'turn/start')!.params;
+    assert.equal(start.model, 'router-fast');
+    assert.equal(start.modelProvider, 'native-provider');
+    assert.equal(turn.model, 'router-fast');
+    assert.equal(turn.modelProvider, 'native-provider');
+  } finally {
+    await router.close();
+  }
+});

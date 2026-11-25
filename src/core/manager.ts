@@ -145,9 +145,9 @@ const HELP = `tab-ai 管理命令（不会发送给 agent）：
 /tab tasks — 查看本任务树或本聊天的主任务
 /tab task-to <任务短ID> 内容 — 定向补充要求
 /tab task-pause|task-resume|task-cancel [任务ID] — 暂停、继续或取消任务树
-/tab new [codex|claude|opencode|traecli] [工作区别名] — 飞书新建独立话题与会话
-/tab topic [codex|claude|opencode|traecli] [工作区别名] — 同 /tab new
-/tab init [codex|claude|opencode|traecli] [工作区别名] — 首次初始化主会话，不执行任务
+/tab new [codex|claude|opencode|traecli|agy] [工作区别名] — 飞书新建独立话题与会话
+/tab topic [codex|claude|opencode|traecli|agy] [工作区别名] — 同 /tab new
+/tab init [codex|claude|opencode|traecli|agy] [工作区别名] — 首次初始化主会话，不执行任务
 创建命令可追加 --instructions 附加指令（支持多行；首次任务开始后固定）
 /tab workspace [目录] — 查看或切换当前主会话工作目录（保留旧历史）
 /tab instructions — 查看当前会话的附加指令
@@ -497,11 +497,15 @@ export class Manager {
     );
   }
   agentCatalog() {
-    return (['codex', 'claude', 'opencode', 'traecli'] as const).map((id) => ({
+    return (['codex', 'claude', 'opencode', 'traecli', 'agy'] as const).map((id) => ({
       id,
-      name: { codex: 'Codex', claude: 'Claude Code', opencode: 'OpenCode', traecli: 'TRAE CLI' }[
-        id
-      ],
+      name: {
+        codex: 'Codex',
+        claude: 'Claude Code',
+        opencode: 'OpenCode',
+        traecli: 'TRAE CLI',
+        agy: 'Antigravity CLI',
+      }[id],
       default: id === this.config.defaultAgent,
       canCompact: !!this.agents[id].compact,
       canControlLoops: !!this.agents[id].loops,
@@ -3391,6 +3395,10 @@ export class Manager {
       throw new Error(
         '此 OpenCode 会话使用通道背景或附加指令；当前原生终端没有等价的逐轮 system 参数。请在 tab-ai 中继续，以保持指令一致。',
       );
+    if (session.agent === 'agy' && agentInstructions(session))
+      throw new Error(
+        '此 Antigravity CLI 会话使用通道背景或附加指令；当前原生终端没有等价的附加系统提示参数。请在 tab-ai 中继续，以保持指令一致。',
+      );
     if (session.status === 'closed') throw new Error('请先打开会话，再交给原生终端。');
     if (!session.nativeId) throw new Error('会话尚未启动，请先发送一条消息再恢复原生终端。');
     if (this.active.has(session.id)) throw new Error('请先停止任务并等待退出，再切换到原生终端。');
@@ -3903,6 +3911,7 @@ export class Manager {
       if (args[0] === 'create')
         return adminReply('新建独立会话，或发送 /tab task <目标> 创建主任务；不会重置当前会话。', [
           { label: '新建 TRAE CLI', command: '/tab new traecli', mutation: true },
+          { label: '新建 Antigravity CLI', command: '/tab new agy', mutation: true },
           { label: '新建 Codex', command: '/tab new codex', mutation: true },
           { label: '新建 Claude', command: '/tab new claude', mutation: true },
           { label: '新建 OpenCode', command: '/tab new opencode', mutation: true },
@@ -3963,7 +3972,14 @@ export class Manager {
       }
       if (action === 'task-cancel') this.tasks.cancel(task.id);
       if (action === 'task-pause') this.tasks.pause(task.id);
-      if (action === 'task-resume') this.tasks.resume(task.id);
+      if (action === 'task-resume') {
+        const selfOnly = !!task.parentId && !args[0];
+        this.tasks.resume(task.id, { selfOnly });
+        const updated = this.store.taskRecord(task.id)!;
+        return taskReply(
+          updated.parentId ? this.tasks.describeSelf(updated) : this.tasks.describe(updated),
+        );
+      }
       return taskReply(this.tasks.describe(this.store.taskRecord(task.id)!));
     }
     if (action === 'workspace') {

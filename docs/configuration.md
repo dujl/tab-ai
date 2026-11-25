@@ -59,7 +59,8 @@ tab-ai -c /path/to/config.json serve
     "codex": { "command": "codex" },
     "claude": {},
     "opencode": { "command": "opencode" },
-    "traecli": { "command": "traecli" }
+    "traecli": { "command": "traecli" },
+    "agy": { "command": "agy" }
   },
   "channels": []
 }
@@ -69,8 +70,9 @@ tab-ai -c /path/to/config.json serve
 | ---------------------- | ----------------------------------------------------------------------------------------------------- |
 | `dataDir`              | SQLite、访问令牌、渠道凭证、附件和向导草稿所在地                                                      |
 | `port`                 | 本机 HTTP 端口；默认监听 `127.0.0.1`，局域网需显式配置                                                |
-| `defaultAgent`         | 新会话未指定时使用 codex、traecli、claude 或 opencode；不替换旧会话后端                               |
-| `topicRouterAgent`     | 独立意图识别及报告生成后端，可选 codex/traecli/claude；不复用工作 session                             |
+| `defaultAgent`         | 新会话未指定时使用 codex、traecli、agy、claude 或 opencode；不替换旧会话后端                          |
+| `topicRouterAgent`     | 独立意图识别及报告生成后端，可选 codex/traecli/agy/claude；不复用工作 session                         |
+| `topicRouterModel`     | 可选；指定分类与报告生成后端使用的模型名称，留空则沿用原生默认模型                                    |
 | `defaultWorkspace`     | `workspaces` 中的默认别名                                                                             |
 | `workspaces`           | 目录别名映射；会话也可显式使用本机存在的绝对目录                                                      |
 | `defaultInstructions`  | 可选的默认附加指令；普通会话未配置时沿用原生指令                                                      |
@@ -84,7 +86,7 @@ tab-ai -c /path/to/config.json serve
 
 ## 4. 模型与登录
 
-先在运行服务的同一系统用户下登录 Codex、TRAE CLI、Claude Code 或 OpenCode。保留原生 HOME 和原生配置；tab-ai 不把一种 Agent 的认证转换成另一种。TRAE CLI 使用 `agents.traecli.command` 指定命令，默认 `traecli`；完整运行步骤见 [TRAE CLI 接入](traecli.md)。
+先在运行服务的同一系统用户下登录 Codex、TRAE CLI、Antigravity CLI、Claude Code 或 OpenCode。保留原生 HOME 和原生配置；tab-ai 不把一种 Agent 的认证转换成另一种。TRAE CLI 使用 `agents.traecli.command` 指定命令，默认 `traecli`；完整运行步骤见 [TRAE CLI 接入](traecli.md)。Antigravity CLI 使用 `agents.agy.command` 指定命令，默认 `agy`；详见 [Antigravity CLI 接入](agy.md)。
 
 模型默认从原生配置读取。要只修改一个 session，在飞书会话卡片或 Dashboard 的“模型 / 思考”面板读取该 Agent 提供的列表并保存。原生配置、项目指令和模型覆盖的详细行为见[会话手册](sessions-guide.md)。
 

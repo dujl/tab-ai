@@ -1253,13 +1253,14 @@ export function createConsole({ api, refresh, selectSession, showError }) {
   function renderAgents() {
     const agents =
         state.agentCatalog ||
-        ['codex', 'claude', 'opencode', 'traecli'].map((id) => ({
+        ['codex', 'claude', 'opencode', 'traecli', 'agy'].map((id) => ({
           id,
           name: {
             codex: 'Codex',
             claude: 'Claude Code',
             opencode: 'OpenCode',
             traecli: 'TRAE CLI',
+            agy: 'Antigravity CLI',
           }[id],
         })),
       signature = JSON.stringify([agents, state.sessions]);
@@ -1949,7 +1950,7 @@ export function createAgentPlans({ api }) {
         el(
           'p',
           'footnote',
-          `${plan.current ? '最近一轮' : '历史轮次'} · ${{ codex: 'Codex', claude: 'Claude Code', opencode: 'OpenCode', traecli: 'TRAE CLI' }[plan.source]}${plan.archived ? ' · 重置前历史' : ''}`,
+          `${plan.current ? '最近一轮' : '历史轮次'} · ${{ codex: 'Codex', claude: 'Claude Code', opencode: 'OpenCode', traecli: 'TRAE CLI', agy: 'Antigravity CLI' }[plan.source]}${plan.archived ? ' · 重置前历史' : ''}`,
         ),
       );
       if (plan.explanation) card.append(el('p', 'agent-plan-explanation', plan.explanation));

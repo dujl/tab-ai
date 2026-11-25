@@ -180,13 +180,10 @@ export class Tasks {
       ? {
           current: task,
           root,
-          tasks: this.store
-            .taskRecords()
-            .filter((t) => t.rootId === root.id)
-            .map((t) => ({
-              ...t,
-              waitingForUser: !!t.sessionId && this.store.get(t.sessionId)?.status === 'waiting',
-            })),
+          tasks: this.descendants(task).map((t) => ({
+            ...t,
+            waitingForUser: !!t.sessionId && this.store.get(t.sessionId)?.status === 'waiting',
+          })),
         }
       : undefined;
   }
@@ -606,7 +603,7 @@ export class Tasks {
     }
     this.changed(task);
   }
-  resume(id: string): void {
+  resume(id: string, options: { selfOnly?: boolean } = {}): void {
     const task = this.require(id);
     if (task.executionMode === 'interactive')
       throw Error('请使用本会话的恢复操作；回填不会自动启用编排。');
@@ -621,7 +618,7 @@ export class Tasks {
     task.state = 'waiting';
     delete task.error;
     this.store.saveTask(task);
-    for (const item of this.descendants(task)) {
+    for (const item of options.selfOnly ? [task] : this.descendants(task)) {
       const interrupted = this.store
         .taskJobs()
         .filter((j) => j.taskId === item.id && j.state === 'interrupted');
@@ -785,11 +782,22 @@ export class Tasks {
     if (!this.host.experiences) throw Error('经验服务不可用');
     return this.host.experiences(sessionId, q);
   }
+  describeSelf(task: TaskRecord): string {
+    return [
+      '【tab-ai 当前任务】',
+      `${task.title} · ${taskStateNames[task.state]}`,
+      `任务 ID：${task.id}`,
+      ...(task.sessionId ? [`会话 ID：${task.sessionId}`] : []),
+      ...(task.error ? [task.error] : []),
+      ...(task.link ? [task.link] : []),
+      '在此话题直接输入即可继续。',
+    ].join('\n');
+  }
   describe(task: TaskRecord): string {
-    return `【tab-ai 任务树】\n${this.tree(task)
+    return `【tab-ai 任务树】\n${this.descendants(task)
       .map(
         (t) =>
-          `${t.parentId ? '↳ ' : ''}${t.title} · ${taskStateNames[t.state]}\n任务 ID：${t.id}\n${t.sessionId ? `会话 ID：${t.sessionId}\n` : ''}${t.error ? `${t.error}\n` : ''}${t.link ?? ''}`,
+          `${t.id === task.id ? '' : '↳ '}${t.title} · ${taskStateNames[t.state]}\n任务 ID：${t.id}\n${t.sessionId ? `会话 ID：${t.sessionId}\n` : ''}${t.error ? `${t.error}\n` : ''}${t.link ?? ''}`,
       )
       .join('\n')}\n在对应话题直接输入；跨任务可用 /tab task-to <任务短ID> 内容。`;
   }

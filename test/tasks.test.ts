@@ -659,3 +659,67 @@ test('cancelled interactive tasks remain cancelled in the product catalog', asyn
     await f.cleanup();
   }
 });
+
+test('sending /tab task-resume in a child session resumes only itself and hides unrelated tasks', async () => {
+  const f = fixture();
+  f.agent.handler = async () => {};
+  try {
+    const t = await root(f);
+    await until(() => f.store.taskRecord(t.id)?.state === 'waiting');
+    const childA = await f.manager.tasks.createChild(t.sessionId!, {
+      ...child('child-a'),
+      title: '子任务 A',
+      start: false,
+    });
+    const childB = await f.manager.tasks.createChild(t.sessionId!, {
+      ...child('child-b'),
+      title: '子任务 B',
+      start: false,
+    });
+    const grandChild = await f.manager.tasks.createChild(childA.sessionId!, {
+      ...child('grandchild-a'),
+      title: '孙任务',
+      start: false,
+    });
+    await f.manager.idle();
+    for (const item of [childA, childB, grandChild]) {
+      const rec = f.store.taskRecord(item.id)!;
+      rec.state = 'blocked';
+      f.store.saveTask(rec);
+      const job = f.store.enqueueTask(item.id, `${item.id}:int`, 'interrupted work');
+      job.state = 'interrupted';
+      f.store.saveTaskJob(job);
+    }
+    const before = f.channel.sent.length;
+    await f.manager.receive({
+      ...incoming('/tab task-resume'),
+      route: childA.route,
+      replyTo: childA.route.thread,
+    });
+    await f.manager.idle();
+    const reply = f.channel.sent.slice(before).at(-1)!.text;
+    assert.ok(reply.includes('子任务 A'));
+    assert.ok(reply.includes(childA.id));
+    assert.ok(!reply.includes('子任务 B'));
+    assert.ok(!reply.includes(childB.id));
+    assert.ok(!reply.includes('孙任务'));
+    assert.ok(!reply.includes(t.id));
+    assert.notEqual(f.store.taskRecord(childA.id)?.state, 'blocked');
+    assert.equal(f.store.taskRecord(childB.id)?.state, 'blocked');
+    assert.equal(f.store.taskRecord(grandChild.id)?.state, 'blocked');
+
+    // describe() and board() for a task show only itself and its descendants, never parent or siblings.
+    const branchText = f.manager.tasks.describe(f.store.taskRecord(childA.id)!);
+    assert.ok(branchText.includes('子任务 A'));
+    assert.ok(branchText.includes('孙任务'));
+    assert.ok(!branchText.includes('子任务 B'));
+    assert.ok(!branchText.includes(t.id));
+    const childBoard = f.manager.tasks.board(childA.sessionId!)!;
+    assert.deepEqual(
+      childBoard.tasks.map((item) => item.id),
+      [childA.id, grandChild.id],
+    );
+  } finally {
+    await f.cleanup();
+  }
+});
