@@ -243,6 +243,7 @@ export class Manager {
         return this.reports.experiences(s, q);
       },
       waitingForUser: (id) => this.interactions().some((r) => r.sessionId === id),
+      resolveWorkspace: (value) => sessionWorkspace(value, this.config.workspaces),
       provision: (task, message) => this.provisionTask(task, message),
       run: (session, text) => this.start(session, { id: randomUUID(), text, route: session.route }),
       active: (id) => this.active.has(id) || this.publishingTaskEntries.has(id),
@@ -558,11 +559,9 @@ export class Manager {
       const parent = this.taskCatalog().find((n) => n.key === parentKey);
       if (!parent?.sessionId) throw Error('父任务不存在或尚未建立对话');
       if (input.sourceSessionId) throw Error('子任务不能更换来源聊天');
-      if (
-        input.workspace &&
-        sessionWorkspace(input.workspace, this.config.workspaces) !== parent.workspace
-      )
-        throw Error('子任务默认继承所选父任务目录；请在父任务设置中明确目录。');
+      const workspace = input.workspace
+        ? sessionWorkspace(input.workspace, this.config.workspaces)
+        : undefined;
       this.tasks.adoptSession(parent.sessionId);
       const task = await this.tasks.createChild(parent.sessionId, {
         key: input.key,
@@ -570,6 +569,7 @@ export class Manager {
         objective: input.objective,
         criteria: input.criteria || '按目标完成并提供可核验成果',
         agent: input.agent,
+        ...(workspace ? { workspace } : {}),
         start: input.start,
       });
       return this.taskCatalog().find((n) => n.taskId === task.id)!;
@@ -954,6 +954,13 @@ export class Manager {
       this.store.current(message.route)?.workspace ??
       this.store.current({ ...message.route, thread: '' })?.workspace ??
       this.workspaceDefault(message)
+    );
+  }
+  private childAgentDefault(message: Pick<Incoming, 'route'>): AgentKind {
+    return (
+      this.store.current(message.route)?.agent ??
+      this.store.current({ ...message.route, thread: '' })?.agent ??
+      this.config.defaultAgent
     );
   }
   refreshSessionCards(): void {
@@ -1601,7 +1608,7 @@ export class Manager {
       if (intent) {
         await this.newSession(
           message,
-          intent.agent === null ? this.config.defaultAgent : agentKind(intent.agent),
+          intent.agent === null ? this.childAgentDefault(message) : agentKind(intent.agent),
           intent.workspace ?? this.childWorkspaceDefault(message),
           current,
           intent.task,
@@ -3432,17 +3439,16 @@ export class Manager {
     const parent = this.store.get(parentId);
     if (!parent) throw Error('父会话不存在');
     if (parent.taskId) {
-      if (
-        input.workspace &&
-        sessionWorkspace(input.workspace, this.config.workspaces) !== parent.workspace
-      )
-        throw Error('新子任务继承直接父级目录，不能在创建时替换为其他目录。');
+      const workspace = input.workspace
+        ? sessionWorkspace(input.workspace, this.config.workspaces)
+        : undefined;
       const task = await this.tasks.createChild(parentId, {
         key: input.key,
         title: input.title.slice(0, 60),
         objective: input.objective,
         criteria: '按用户目标完成并提供可核验成果',
         agent: input.agent,
+        ...(workspace ? { workspace } : {}),
         start: false,
         instructions: input.instructions,
       });
@@ -3492,15 +3498,15 @@ export class Manager {
   ): Promise<Session> {
     const workspace = sessionWorkspace(alias, this.config.workspaces);
     if (current?.taskId) {
-      if (workspace !== current.workspace)
-        throw Error('子任务默认继承当前父任务目录；请先明确父任务目录。');
+      const additions = sessionInstructions(instructions);
       const created = await this.tasks.createChild(current.id, {
         key: options?.key ?? message.id,
         title: (options?.title ?? taskTitle(task ?? '') ?? `${agent} 子任务`).slice(0, 60),
         objective: options?.objective ?? task ?? '',
         criteria: '按用户目标完成并提供可核验成果',
         agent,
-        instructions,
+        workspace,
+        ...(additions !== undefined ? { instructions: additions } : {}),
         start: !!task,
       });
       return this.store.get(created.sessionId!)!;
@@ -4131,7 +4137,10 @@ export class Manager {
     }
     if (action === 'new' || action === 'topic' || action === 'init') {
       const options = creationOptions(message.text);
-      const agent = agentKind(options.args[0] ?? this.config.defaultAgent);
+      const agent = agentKind(
+        options.args[0] ??
+          (action === 'init' ? this.config.defaultAgent : this.childAgentDefault(message)),
+      );
       const alias =
         options.args[1] ??
         (action === 'init' ? this.workspaceDefault(message) : this.childWorkspaceDefault(message));

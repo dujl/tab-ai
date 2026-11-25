@@ -83,7 +83,7 @@ export async function taskBridge(
         'task_create',
         {
           description:
-            '创建独立子任务、话题与原生 Agent session，后端自动调度。默认继承当前父任务工作目录，只传必要资料，不复制对话历史。用稳定 key 避免重复创建。等待子任务时结束本轮，勿 sleep 或轮询。',
+            '创建独立子任务、话题与原生 Agent session，后端自动调度。默认继承当前父任务工作目录与 Agent，也可通过 workspace / agent / instructions 显式指定新配置；只传必要资料，不复制对话历史。用稳定 key 避免重复创建。等待子任务时结束本轮，勿 sleep 或轮询。',
           inputSchema: childTaskSchema.shape,
         },
         (input) =>

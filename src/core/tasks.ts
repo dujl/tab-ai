@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Store } from './store.js';
 import { lessonExcerpts } from './report-model.js';
+import { customWorkspace } from './session-workspace.js';
 import type { AgentKind, Incoming, Session } from './types.js';
 import { routeKey } from './types.js';
 import {
@@ -33,6 +34,7 @@ interface Host {
     eventId: number,
   ): void;
   waitingForUser?(sessionId: string): boolean;
+  resolveWorkspace?(value: string): string;
 }
 export class Tasks {
   private stopping = false;
@@ -324,37 +326,45 @@ export class Tasks {
     this.ensureAccess(parent);
     const input = childTaskSchema.parse(raw);
     if (input.start && !input.objective.trim()) throw Error('立即执行子任务时请填写任务目标');
+    const explicitWorkspace =
+      input.workspace !== undefined
+        ? this.host.resolveWorkspace
+          ? this.host.resolveWorkspace(input.workspace)
+          : customWorkspace(input.workspace)
+        : undefined;
     const key = JSON.stringify(['child', parent.id, input.key]);
     return this.dedupe(key, async () => {
-      this.ensureAccess(this.require(parent.id));
-      const tree = this.tree(parent);
-      if (tree.length >= 32 || this.children(parent).length >= 12)
+      const currentParent = this.require(parent.id);
+      this.ensureAccess(currentParent);
+      const tree = this.tree(currentParent);
+      if (tree.length >= 32 || this.children(currentParent).length >= 12)
         throw new Error('任务树达到上限：最多 32 个任务、每个任务最多 12 个直接子任务');
       let depth = 0,
-        ancestor: TaskRecord | undefined = parent;
+        ancestor: TaskRecord | undefined = currentParent;
       while (ancestor?.parentId) {
         if (++depth >= MAX_SESSION_DEPTH) throw new Error(`子任务嵌套最多 ${MAX_SESSION_DEPTH} 层`);
         ancestor = this.store.taskRecord(ancestor.parentId);
       }
       for (const id of input.dependencies) {
         const dependency = this.require(id);
-        if (dependency.parentId !== parent.id) throw new Error('依赖只能引用已创建的同级子任务');
+        if (dependency.parentId !== currentParent.id)
+          throw new Error('依赖只能引用已创建的同级子任务');
       }
       const id = randomUUID(),
         now = Date.now(),
-        workspace = parent.workspace;
+        workspace = explicitWorkspace ?? currentParent.workspace;
       const task: TaskRecord = {
         id,
-        rootId: parent.rootId,
-        parentId: parent.id,
+        rootId: currentParent.rootId,
+        parentId: currentParent.id,
         key,
         title: input.title,
         objective: input.objective,
         criteria: input.criteria,
         context: input.context,
-        agent: input.agent ?? parent.agent,
+        agent: input.agent ?? currentParent.agent,
         workspace,
-        route: { ...parent.route },
+        route: { ...currentParent.route },
         dependencies: [...new Set(input.dependencies)],
         state: 'provisioning',
         revision: 0,
@@ -412,7 +422,7 @@ export class Tasks {
     }
   }
   private initialText(task: TaskRecord): string {
-    return `任务：${task.title}\n目标：${task.objective}\n验收条件：${task.criteria}\n${task.context ? `明确提供的输入资料：\n${task.context}\n` : ''}当前任务工作目录：${task.workspace}。新子任务默认继承直接父任务目录；已建节点可明确修改自身目录，不自动修改其他节点。会话上下文独立，同目录下文件共享；并行修改时协调文件分工，避免覆盖其他任务的改动。\n\n这是一个独立任务 session，未复制发起聊天历史。${task.parentId ? '完成自己的任务；仅在必要时进一步拆分。' : '你负责主任务：按需要调用 task_create 自动拆分为独立子任务，明确输入和验收条件，避免亲自重复子任务工作。'}\n最终 task_report 可附 handoff，写清交付产物、规格/接口或研究口径、验证、遗留事项和有依据的可复用经验。下游会依赖版本化报告接续；可用 task_report_read 读取关联报告，用 task_experience 检索同一授权范围经验。使用 tab-ai 任务工具维护状态：task_list 查看本任务及直接子任务；task_create 创建子任务（幂等 key，默认继承当前父任务工作目录）；task_review 验收子任务报告或提出返工。子任务运行期间结束本轮等待，结果会由系统稍后送达，不要循环轮询或 sleep。完成工作后必须调用 task_report 提交结论、产物、验证和遗留问题；普通回复不代表任务完成。主任务需先验收全部子任务再提交最终结果。不要用原生 spawn_agent/subagent 代替 task_create；需向用户提问或审批时使用原生交互工具。`;
+    return `任务：${task.title}\n目标：${task.objective}\n验收条件：${task.criteria}\n${task.context ? `明确提供的输入资料：\n${task.context}\n` : ''}当前任务工作目录：${task.workspace}。新子任务默认继承直接父任务目录，也可在创建时显式指定新目录；已建节点可明确修改自身目录，不自动修改其他节点。会话上下文独立，同目录下文件共享；并行修改时协调文件分工，避免覆盖其他任务的改动。\n\n这是一个独立任务 session，未复制发起聊天历史。${task.parentId ? '完成自己的任务；仅在必要时进一步拆分。' : '你负责主任务：按需要调用 task_create 自动拆分为独立子任务，明确输入和验收条件，避免亲自重复子任务工作。'}\n最终 task_report 可附 handoff，写清交付产物、规格/接口或研究口径、验证、遗留事项和有依据的可复用经验。下游会依赖版本化报告接续；可用 task_report_read 读取关联报告，用 task_experience 检索同一授权范围经验。使用 tab-ai 任务工具维护状态：task_list 查看本任务及直接子任务；task_create 创建子任务（幂等 key，默认继承当前父任务工作目录，可按需显式指定 workspace）；task_review 验收子任务报告或提出返工。子任务运行期间结束本轮等待，结果会由系统稍后送达，不要循环轮询或 sleep。完成工作后必须调用 task_report 提交结论、产物、验证和遗留问题；普通回复不代表任务完成。主任务需先验收全部子任务再提交最终结果。不要用原生 spawn_agent/subagent 代替 task_create；需向用户提问或审批时使用原生交互工具。`;
   }
   listForSession(sessionId: string): TaskRecord[] {
     const task = this.forSession(sessionId);

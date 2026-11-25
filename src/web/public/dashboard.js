@@ -1314,7 +1314,7 @@ export function createConsole({ api, refresh, selectSession, showError }) {
     $('task-objective-input').required = false;
     $('task-criteria-input').value = '按目标完成并提供可核验成果';
     $('task-source-label').hidden = !!parent;
-    $('task-workspace-label').hidden = !!parent;
+    $('task-workspace-label').hidden = false;
     $('task-context-label').hidden = true;
     $('task-context-input').value = '';
     $('task-start-now').checked = false;
@@ -1328,7 +1328,7 @@ export function createConsole({ api, refresh, selectSession, showError }) {
       $('task-objective-input').required = $('task-start-now').checked;
     };
     $('task-form-note').textContent = parent
-      ? `直接父任务：${parent.title} · ${parent.record.id || parent.key}。新任务具有独立对话，默认等待输入。工作目录继承当前父任务。`
+      ? `直接父任务：${parent.title} · ${parent.record.id || parent.key}。新任务具有独立对话，默认等待输入。工作目录默认继承当前父任务，也可显式修改。`
       : '任务可以先建立、后补充目标。选择 IM 来源后网页与该 IM 共用会话；仅网页任务不自动关联 IM。勾选立即执行后才开始推进。';
     $('task-source').replaceChildren(
       new Option('仅网页（不关联 IM）', ''),
@@ -1343,15 +1343,12 @@ export function createConsole({ api, refresh, selectSession, showError }) {
         ),
     );
     $('task-agent').value = agent || parent?.agent || state.defaultAgent;
-    $('task-workspace-input').value = parent?.session?.workspace || state.defaultWorkspace;
+    $('task-workspace-input').value =
+      parent?.session?.workspace || parent?.workspace || state.defaultWorkspace;
     $('task-form-error').textContent = '';
     $('task-save').disabled = false;
     $('task-save').textContent = '创建任务';
     $('task-dialog').showModal();
-    $('task-source').onchange = () => {
-      const s = state.sessions.find((s) => s.id === $('task-source').value);
-      $('task-workspace-input').value = s?.workspace || state.defaultWorkspace;
-    };
     $('task-form').onsubmit = (e) => {
       e.preventDefault();
       void (async () => {
@@ -1367,7 +1364,7 @@ export function createConsole({ api, refresh, selectSession, showError }) {
               criteria: $('task-criteria-input').value,
               agent: $('task-agent').value,
               start: $('task-start-now').checked,
-              ...(parent?.task ? {} : workspace ? { workspace } : {}),
+              ...(workspace ? { workspace } : {}),
               ...(!target && source ? { sourceSessionId: source } : {}),
             };
           const node = await api(target ? `/task-nodes/${target}/children` : '/task-nodes', input);

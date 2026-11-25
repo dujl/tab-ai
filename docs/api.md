@@ -46,7 +46,7 @@ API 与 Dashboard 使用同一服务，默认 `http://127.0.0.1:4317`。请求�
 
 生命周期写入返回 200 `{task}`。只交互节点不提供调度暂停/恢复/取消，使用本会话控制；新增调度子任务会按需启用编排。
 
-子任务参数：key（同上）、title、objective（最长 16000）、非空 criteria（最长 4000）；可选 context（最长 16000）、instructions、agent、dependencies、workspaceMode、start。workspaceMode 仅为 shared，表示继承直接父级目录，没有自动 worktree；dependencies 最多 12 个已创建同级任务 UUID。start 在此底层接口默认 true，与统一网页创建入口的默认值不同。关闭、暂停和验收不是同一操作。
+子任务参数：key（同上）、title、objective（最长 16000）、非空 criteria（最长 4000）；可选 context（最长 16000）、instructions、agent、workspace、dependencies、workspaceMode、start。未传 workspace 时默认继承直接父级目录，显式传入时使用指定目录或预设工作区别名；workspaceMode 仅为 shared，表示不自动创建 worktree；dependencies 最多 12 个已创建同级任务 UUID。start 在此底层接口默认 true，与统一网页创建入口的默认值不同。关闭、暂停和验收不是同一操作。
 
 成果提交、进展与验收通过当前有效原生轮的受限任务工具完成，详见 [任务编排](task-orchestration.md)。
 

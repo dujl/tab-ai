@@ -96,12 +96,20 @@ export const childTaskSchema = z
     criteria: z.string().min(1).max(4000),
     context: z.string().max(16000).default(''),
     agent: agentKindSchema.optional(),
+    workspace: z
+      .string()
+      .min(1)
+      .max(4096)
+      .optional()
+      .describe(
+        'Optional target directory or configured workspace alias; defaults to direct parent workspace.',
+      ),
     instructions: z.string().max(16000).optional(),
     workspaceMode: z
       .literal('shared')
       .default('shared')
       .describe(
-        'New children inherit the direct parent workspace. No automatic worktree or filesystem isolation.',
+        'New children inherit the direct parent workspace unless workspace is explicitly specified. No automatic worktree or filesystem isolation.',
       ),
     dependencies: z.array(z.string().uuid()).max(12).default([]),
     start: z.boolean().default(true).describe('false 只建立子任务，等待用户后续输入再执行。'),
