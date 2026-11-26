@@ -9,6 +9,7 @@ import type { AgentAdapter, AgentKind, Incoming, Session } from './types.js';
 import { reportPresentation } from './report-document.js';
 import { archiveSessionUsage } from './token-usage.js';
 import { taskReportFingerprint } from './task-report-snapshot.js';
+import { nativeApprovalPolicy } from './approval-policy.js';
 
 export const relayInput = z
   .object({
@@ -281,7 +282,9 @@ export class AgentRelay {
           'traecliTaskTools',
         ] as const)
           delete session![key];
-        session!.approvalPolicy = 'on-request';
+        // Native policy names belong to the target backend. Pin the app-server
+        // default so legacy preference recovery cannot restore a source policy.
+        session!.approvalPolicy = nativeApprovalPolicy({ agent: stage!.agent });
         session!.status = 'idle';
         this.store.save(session!);
         if (session!.taskId) {

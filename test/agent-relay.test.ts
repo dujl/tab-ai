@@ -3,12 +3,16 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { join } from 'node:path';
-import { rmSync, readdirSync, statSync } from 'node:fs';
+import { rmSync, readdirSync, statSync, copyFileSync, chmodSync, readFileSync } from 'node:fs';
 import { fixture, incoming, until } from './helpers.js';
 import { Store } from '../src/core/store.js';
 import { createDashboard } from '../src/web/server.js';
 import { relayKey } from '../src/web/public/agent-relay.js';
 import { agentPlans } from '../src/core/agent-plans.js';
+import { selectedApprovalPolicy } from '../src/core/approval-policy.js';
+import { AgyAdapter } from '../src/agents/agy.js';
+import { ClaudeAdapter, type ClaudeQuery } from '../src/agents/claude.js';
+import type { AgentKind } from '../src/core/types.js';
 
 const draft = (summary = '已完成接口，测试待续。') => ({
   summary,
@@ -47,6 +51,107 @@ async function ready(f: ReturnType<typeof setup>, stageId: string) {
     return !!s?.inputReportId && f.store.reports.get(s.inputReportId)?.state === 'ready';
   });
 }
+
+for (const agent of ['codex', 'traecli', 'claude', 'opencode', 'agy'] as AgentKind[]) {
+  test(`relay clears source grants and selects the ${agent} approval default`, async () => {
+    const f = setup();
+    try {
+      const s = f.store.create(incoming('').route, 'codex', f.dir);
+      s.approvalPolicy = 'auto-allow';
+      f.store.save(s);
+      const stage = await f.manager.relay.prepare(s.id, { agent, key: 'policy-' + agent });
+      await ready(f, stage.id);
+      await f.manager.relay.confirm(s.id, stage.id);
+      const current = f.store.get(s.id)!;
+      assert.equal(
+        current.approvalPolicy,
+        ['codex', 'traecli'].includes(agent) ? 'on-request' : undefined,
+      );
+      assert.equal(
+        selectedApprovalPolicy(current),
+        ['codex', 'traecli'].includes(agent) ? 'on-request' : 'native',
+      );
+      assert.equal(f.agent.inputs.length, 0);
+    } finally {
+      await f.cleanup();
+    }
+  });
+}
+
+test('relay uses Antigravity ACP without forwarding a Codex mode before the first prompt', async () => {
+  const f = setup();
+  try {
+    const executable = join(f.dir, 'fake-agy.mjs');
+    copyFileSync(new URL('./fixtures/fake-agy.mjs', import.meta.url), executable);
+    chmodSync(executable, 0o755);
+    (f.manager as any).agents.agy = new AgyAdapter(executable);
+    const s = f.store.create(incoming('').route, 'codex', f.dir);
+    s.approvalPolicy = 'on-request-auto-review';
+    f.store.save(s);
+    const stage = await f.manager.relay.prepare(s.id, { agent: 'agy', key: 'acp-policy' });
+    await ready(f, stage.id);
+    await f.manager.relay.confirm(s.id, stage.id);
+    f.manager.submit(s.id, '按报告继续');
+    await f.manager.idle();
+    assert.equal(f.store.get(s.id)!.status, 'idle');
+    assert.equal(f.store.stages.get(stage.id)!.transition!.phase, 'submitted');
+    const trace = readFileSync(join(f.dir, 'acp-trace.jsonl'), 'utf8')
+      .trim()
+      .split('\n')
+      .map((x) => JSON.parse(x));
+    assert.equal(trace.filter((x) => x.method === 'session/prompt').length, 1);
+    assert.ok(
+      !trace.some(
+        (x) =>
+          x.method === 'session/set_mode' ||
+          (x.method === 'session/set_config_option' && x.params.configId === 'mode'),
+      ),
+    );
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test('relay uses Claude SDK defaults without a foreign permissionMode or native resume', async () => {
+  const f = setup();
+  try {
+    let options: any;
+    const runtime = ((input) => {
+      options = input.options;
+      return Object.assign(
+        (async function* () {
+          yield { type: 'system', subtype: 'init', session_id: 'claude-relay-native' } as any;
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'claude-relay-native',
+            is_error: false,
+            result: '已收到报告入口',
+          } as any;
+        })(),
+        { close() {} },
+      );
+    }) as ClaudeQuery;
+    const adapter = new ClaudeAdapter(undefined, [], runtime);
+    adapter.models = async () => [{ id: 'mock-model', label: 'Mock Model', efforts: [] }];
+    (f.manager as any).agents.claude = adapter;
+    const s = f.store.create(incoming('').route, 'codex', f.dir);
+    s.nativeId = 'codex-before-relay';
+    s.approvalPolicy = 'auto-allow';
+    f.store.save(s);
+    const stage = await f.manager.relay.prepare(s.id, { agent: 'claude', key: 'sdk-policy' });
+    await ready(f, stage.id);
+    await f.manager.relay.confirm(s.id, stage.id);
+    f.manager.submit(s.id, '按报告继续');
+    await f.manager.idle();
+    assert.equal(f.store.get(s.id)!.status, 'idle');
+    assert.equal(options.permissionMode, undefined);
+    assert.equal(options.resume, undefined);
+    assert.equal(f.store.get(s.id)!.nativeId, 'claude-relay-native');
+  } finally {
+    await f.cleanup();
+  }
+});
 
 test('relay archives verified native-history usage from legacy sessions without requiring a new turn', async () => {
   const f = setup();

@@ -248,6 +248,16 @@ createInterface({ input: process.stdin }).on('line', async (line) => {
   }
 
   if (message.method === 'session/set_config_option') {
+    if (
+      message.params.configId === 'mode' &&
+      !['default', 'accept-edits', 'auto', 'plan'].includes(message.params.value)
+    ) {
+      send({
+        id: message.id,
+        error: { code: -32602, message: `Unknown mode: ${message.params.value}` },
+      });
+      return;
+    }
     const opts = defaultConfigOptions().map((opt) =>
       opt.id === message.params.configId ? { ...opt, currentValue: message.params.value } : opt,
     );
@@ -256,6 +266,16 @@ createInterface({ input: process.stdin }).on('line', async (line) => {
   }
 
   if (message.method === 'session/set_mode' || message.method === 'session/set_model') {
+    if (
+      message.method === 'session/set_mode' &&
+      !['default', 'accept-edits', 'auto', 'plan'].includes(message.params.modeId)
+    ) {
+      send({
+        id: message.id,
+        error: { code: -32602, message: `Unknown mode: ${message.params.modeId}` },
+      });
+      return;
+    }
     send({ id: message.id, result: {} });
     return;
   }
