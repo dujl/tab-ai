@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { taskReportFingerprint } from './task-report-snapshot.js';
 import type { Store } from './store.js';
 import type { Session } from './types.js';
 import { sessionParentId, sameSessionScope } from './session-hierarchy.js';
@@ -88,6 +89,7 @@ export class SessionReports {
     sourceKey = `manual:${randomUUID()}`,
     eventId?: number,
     capturePending = false,
+    metadata?: Pick<SessionReport, 'evidenceFingerprint' | 'previousReportId'>,
   ) {
     const s = this.store.get(id);
     if (!s) throw Error('会话不存在');
@@ -100,6 +102,19 @@ export class SessionReports {
       eventId ?? this.store.lastEventId(id),
       capturePending,
     );
+    if (!report.evidenceFingerprint) {
+      Object.assign(
+        report,
+        {
+          evidenceFingerprint: taskReportFingerprint(this.store, s),
+          previousReportId: this.store.reports
+            .list(id, 50)
+            .find((r) => r.id !== report.id && r.state === 'ready')?.id,
+        },
+        metadata,
+      );
+      this.store.reports.save(report);
+    }
     this.start();
     return report;
   }
@@ -128,6 +143,10 @@ export class SessionReports {
       eventId,
     );
     if (report.state === 'ready') return report;
+    report.evidenceFingerprint = taskReportFingerprint(this.store, source);
+    report.previousReportId = this.store.reports
+      .list(id, 50)
+      .find((r) => r.id !== report.id && r.state === 'ready')?.id;
     report.body = {
       ...recordedReport({
         summary: input.summary,
@@ -210,6 +229,13 @@ export class SessionReports {
     const report = this.store.reports.get(id);
     if (!report || !report.capturePending) return;
     report.endEventId = this.store.reportCutoff(report.sessionId, report.sourceEventId);
+    const source = this.store.get(report.sessionId);
+    if (
+      source &&
+      source.currentStageId === report.sourceStageId &&
+      this.store.relayEvidenceId(source.id) <= report.endEventId
+    )
+      report.evidenceFingerprint = taskReportFingerprint(this.store, source);
     delete report.capturePending;
     this.store.reports.save(report);
     if (kick) this.tick();
@@ -256,6 +282,10 @@ export class SessionReports {
           completion: report.outcome,
           taskResult: report.taskResult ?? null,
           history: evidence,
+          context: report.context,
+          previousReport: report.previousReportId
+            ? (this.store.reports.get(report.previousReportId)?.body ?? null)
+            : null,
           allowedEvidence: [...allowed],
         };
         try {
@@ -289,14 +319,18 @@ export class SessionReports {
           '执行历史较长，当前总结使用最近公开记录与结构化成果；完整历史仍保留。',
         ].slice(0, 30);
       if (report.outcome === 'incomplete' && !draft.remainingWork.length)
-        draft.remainingWork = ['会话关闭不表示目标完成；请根据交付与验收条件核对剩余工作。'];
+        draft.remainingWork = ['报告就绪不表示目标完成；请根据交付与验收条件核对剩余工作。'];
       report.body = draft;
       report.state = 'ready';
-      if (report.trigger === 'close' && this.host.notify)
+      if (
+        (report.trigger === 'close' || report.uses?.some((u) => u.kind === 'close')) &&
+        this.host.notify
+      )
         this.prepareNotifications(report, session);
       this.store.atomic(() => {
         this.store.reports.save(report);
-        this.deliver(report, session);
+        if (report.trigger !== 'agent_handoff' || report.uses?.some((u) => u.kind === 'close'))
+          this.deliver(report, session);
       });
       this.host.refresh(session.id);
     } catch {
@@ -308,11 +342,15 @@ export class SessionReports {
   queueNotifications(callerId: string, reportId: string): SessionReport {
     if (this.stopped) throw Error('报告服务正在关闭');
     const report = this.readForTask(callerId, reportId);
-    if (report.state !== 'ready' || report.trigger !== 'close')
+    if (
+      report.state !== 'ready' ||
+      (report.trigger !== 'close' && !report.uses?.some((u) => u.kind === 'close'))
+    )
       throw Error('只能发送已生成的会话结束报告通知');
     // Previously attempted notices keep their result; this never retries unknown sends.
     if (report.notifications === undefined) {
       this.prepareNotifications(report, this.store.get(report.sessionId)!);
+      this.deliver(report, this.store.get(report.sessionId)!);
       this.store.reports.save(report);
     }
     this.start();

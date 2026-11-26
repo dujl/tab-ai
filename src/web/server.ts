@@ -87,6 +87,7 @@ export function createDashboard(manager: Manager, token: string, setup?: SetupSe
           '/setup.js',
           '/dashboard.js',
           '/task-structure.js',
+          '/agent-relay.js',
         ].includes(path)
       ) {
         const file = path === '/' ? 'index.html' : path === '/setup' ? 'setup.html' : path.slice(1);
@@ -167,7 +168,10 @@ export function createDashboard(manager: Manager, token: string, setup?: SetupSe
         const before = query.has('before')
           ? z.coerce.number().int().positive().parse(query.get('before'))
           : undefined;
-        const rows = manager.store.transcriptEvents(id, before),
+        const stageId = query.has('stage') ? z.uuid().parse(query.get('stage')) : undefined;
+        if (stageId && manager.store.stages.get(stageId)?.sessionId !== id)
+          return json(response, 404, { error: '执行阶段不属于本会话' });
+        const rows = manager.store.transcriptEvents(id, before, 120, stageId),
           events = rows.slice(0, 120);
         return json(response, 200, {
           events: events.reverse(),
@@ -323,6 +327,20 @@ export function createDashboard(manager: Manager, token: string, setup?: SetupSe
           unifiedTaskModel: manager.store.taskModelUnified(),
           taskNodes: manager.taskCatalog(),
           agentCatalog: manager.agentCatalog(),
+          agentRelay: true,
+          agentStageStates: Object.fromEntries(
+            manager.store.list().map((s) => [
+              s.id,
+              manager.store.stages.list(s.id).map((t) => ({
+                id: t.id,
+                ordinal: t.ordinal,
+                agent: t.agent,
+                state: t.state,
+                phase: t.transition?.phase,
+                error: t.transition?.error,
+              })),
+            ]),
+          ),
           executionRecords: true,
           tokenUsage: true,
           scopedApprovals: true,
@@ -372,13 +390,74 @@ export function createDashboard(manager: Manager, token: string, setup?: SetupSe
         return json(response, 201, session);
       }
       const match =
-        /^\/api\/sessions\/([^/]+)\/(events|records|usage|todos|approval-policy|messages|begin|stop|answer|detach|attach|close|open|settings|replace-workspace|maintenance|compact|loops|loop-stop|reset|im-entry)$/.exec(
+        /^\/api\/sessions\/([^/]+)\/(events|records|usage|todos|approval-policy|messages|begin|stop|answer|detach|attach|close|open|settings|replace-workspace|maintenance|compact|loops|loop-stop|reset|im-entry|relay|relay-models)$/.exec(
           path,
         );
       if (match) {
         const id = match[1]!;
         if (!manager.store.get(id)) return json(response, 404, { error: '会话不存在' });
         const action = match[2];
+        if (action === 'relay-models' && request.method === 'GET') {
+          const agent = agentKindSchema.parse(
+            new URL(request.url!, 'http://localhost').searchParams.get('agent'),
+          );
+          return json(response, 200, { models: await manager.relay.models(id, agent) });
+        }
+        if (action === 'relay') {
+          if (request.method === 'GET') return json(response, 200, manager.relay.view(id));
+          if (request.method === 'POST') {
+            const raw = await body(request);
+            const op = z
+              .object({
+                action: z.enum([
+                  'prepare',
+                  'confirm',
+                  'cancel',
+                  'retry-input',
+                  'acknowledge-input',
+                  'resume-queue',
+                  'retry-queue',
+                  'dismiss-queue',
+                ]),
+              })
+              .passthrough()
+              .parse(raw);
+            if (op.action === 'prepare') {
+              const { action: _action, ...input } = op;
+              return json(response, 202, { stage: await manager.relay.prepare(id, input) });
+            }
+            const input = z
+              .object({
+                action: z.string(),
+                stageId: z.string().uuid(),
+                acceptFacts: z.boolean().default(false),
+              })
+              .strict()
+              .parse(raw);
+            if (op.action === 'confirm')
+              return json(response, 200, {
+                stage: await manager.relay.confirm(id, input.stageId, input.acceptFacts),
+              });
+            if (op.action === 'cancel') manager.relay.cancel(id, input.stageId);
+            else if (op.action.endsWith('-queue'))
+              manager.relay.resolveQueue(
+                id,
+                input.stageId,
+                op.action === 'resume-queue'
+                  ? 'resume'
+                  : op.action === 'retry-queue'
+                    ? 'retry'
+                    : 'dismiss',
+              );
+            else
+              manager.relay.resolveInput(
+                id,
+                input.stageId,
+                op.action === 'retry-input' ? 'retry' : 'acknowledge',
+              );
+            return json(response, 200, manager.relay.view(id));
+          }
+        }
         if (request.method === 'GET' && action === 'usage') {
           const params = new URL(request.url!, 'http://localhost').searchParams;
           const query = z

@@ -181,6 +181,7 @@
               <button id="approval-policy-quick">审批策略</button
               ><button id="workspace-settings">切换工作目录</button
               ><button id="session-settings">模型 / 思考</button
+              ><button id="agent-relay">Agent 接力与阶段</button
               ><button id="reset-session">重置上下文</button
               ><button id="compact-session">压缩会话</button
               ><button id="session-loops">循环管理</button>
@@ -203,6 +204,12 @@
             <p id="im-entry-note"></p>
             <button id="im-entry-open">补建原 BOT 的任务话题</button>
           </div>
+          <label class="transcript-filter"
+            >对话范围
+            <select id="transcript-stage">
+              <option value="">全部执行阶段</option>
+            </select></label
+          >
           <div id="messages" class="messages" aria-live="polite"></div>
           <div id="conversation-interactions"><div id="interactions"></div></div>
           <form id="composer">

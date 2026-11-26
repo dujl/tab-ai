@@ -29,10 +29,16 @@ export function reportDocument(report: SessionReport, source: Session): string {
       items?.length ? items.map((s) => `- ${s}`).join('\n') : '未记录';
   return (
     [
-      '# 子任务总结与交接报告',
+      '# 任务报告',
       `来源：${source.title ?? '未命名子任务'}\n\nSession：${source.id}\n\n报告：${report.id} · v${report.version}\n\n类型：${report.trigger === 'progress' ? '阶段总结（不表示完成）' : report.trigger}\n\n完成状态：${report.outcome}\n\n生成时间：${new Date(report.createdAt).toISOString()}`,
       '## 总结',
       b?.summary ?? '暂无可确认的总结',
+      ...(report.context
+        ? [
+            '## 任务背景',
+            `目标：${report.context.objective ?? '参见任务原始要求'}\n\n验收：${report.context.criteria ?? '未设置'}\n\n工作目录：${report.context.workspace}\n\n用户附加指令：${report.context.instructions ?? '未设置'}`,
+          ]
+        : []),
       '## 产物',
       list(
         b?.deliverables.map(

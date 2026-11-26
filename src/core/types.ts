@@ -61,6 +61,8 @@ export interface LocalAttachment {
 }
 export interface Session {
   id: string;
+  currentStageId?: string;
+  executionRevision?: number;
   routeKey: string;
   route: Route;
   agent: AgentKind;

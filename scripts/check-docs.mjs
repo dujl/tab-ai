@@ -85,6 +85,7 @@ for (const file of files) {
 const schemaSources = [
   'src/core/store.ts',
   'src/core/report-store.ts',
+  'src/core/agent-stages.ts',
   'src/core/task-migration.ts',
 ]
   .map((file) => readFileSync(resolve(root, file), 'utf8'))

@@ -6,6 +6,7 @@ import {
   createTokenUsage,
   showReportDocument,
 } from '/dashboard.js';
+import { showAgentRelay } from '/agent-relay.js';
 const $ = (id) => document.getElementById(id);
 const labels = {
   idle: '空闲',
@@ -43,8 +44,18 @@ let maintenanceTarget,
   maintenanceMode,
   maintenanceGeneration = 0;
 let transcriptCursor,
+  transcriptStage = '',
+  transcriptStageOptions = '',
   transcriptLoaded = false;
 const transcriptRows = new Map();
+$('transcript-stage').onchange = () => {
+  transcriptStage = $('transcript-stage').value;
+  transcriptRows.clear();
+  transcriptCursor = undefined;
+  transcriptLoaded = false;
+  eventSignature = '';
+  void refresh();
+};
 const drafts = new Map(),
   sending = new Set();
 let shownError, pollingError;
@@ -114,6 +125,9 @@ function setSelected(id) {
   eventSignature = '';
   interactionSignature = '';
   transcriptRows.clear();
+  transcriptStage = '';
+  transcriptStageOptions = '';
+  $('transcript-stage').value = '';
   transcriptCursor = undefined;
   transcriptLoaded = false;
   $('messages').replaceChildren();
@@ -166,6 +180,9 @@ function renderState() {
   $('reset-session').hidden = !state.dualEntryTasks;
   $('reset-session').disabled = busy || session.status === 'detached';
   $('workspace-settings').disabled = busy || session.status === 'detached';
+  $('agent-relay').hidden = !state.agentRelay;
+  $('agent-relay').onclick = () =>
+    showAgentRelay(api, session.id, state.agentCatalog, () => void refresh());
   $('workspace-settings').title =
     '仅修改本节点；已存在的子任务保持原目录。Agent 不支持保留上下文时会明确提示。';
   $('compact-session').disabled = busy || !session.nativeId || session.status === 'detached';
@@ -233,7 +250,7 @@ function renderEvents(events) {
         const tool = JSON.parse(event.text);
         if (!tool.runId || !tool.id) continue;
         if (!groups.has(tool.runId)) {
-          const group = { type: 'tools', id: tool.runId, tools: new Map() };
+          const group = { type: 'tools', id: tool.runId, stageId: event.stageId, tools: new Map() };
           groups.set(tool.runId, group);
           visible.push(group);
         }
@@ -256,8 +273,28 @@ function renderEvents(events) {
     )
       visible.push(event);
   }
+  const stages = state.agentStageStates?.[selected] || [];
+  let precedingStage;
+  const withBoundaries = visible.flatMap((event) => {
+    const key = event.stageId || 'legacy';
+    if (key === precedingStage) return [event];
+    precedingStage = key;
+    const stage = stages.find((s) => s.id === event.stageId);
+    return [
+      {
+        type: 'stage-boundary',
+        label: stage
+          ? `阶段 ${stage.ordinal} · ${stage.agent}`
+          : event.stageId
+            ? `执行阶段 · ${event.stageId.slice(0, 8)}`
+            : '历史记录 · 未登记执行阶段',
+      },
+      event,
+    ];
+  });
   container.replaceChildren(
-    ...visible.map((event) => {
+    ...withBoundaries.map((event) => {
+      if (event.type === 'stage-boundary') return node('div', 'stage-boundary', event.label);
       if (event.type === 'tools') {
         const names = {
           running: '执行中',
@@ -391,8 +428,11 @@ function renderEvents(events) {
       caller = selected;
     more.onclick = safe(async () => {
       more.disabled = true;
-      const page = await api(`/sessions/${caller}/transcript?before=${transcriptCursor}`);
-      if (caller !== selected) return;
+      const stage = transcriptStage;
+      const page = await api(
+        `/sessions/${caller}/transcript?before=${transcriptCursor}${stage ? `&stage=${stage}` : ''}`,
+      );
+      if (caller !== selected || stage !== transcriptStage) return;
       for (const e of page.events) transcriptRows.set(e.id, e);
       transcriptCursor = page.nextBefore;
       eventSignature = '';
@@ -657,14 +697,31 @@ async function refresh() {
     }
     if (selected && !$('workspace').hidden) {
       const id = selected;
+      const stages = state.agentStageStates?.[id] || [],
+        signature = JSON.stringify(stages.map((s) => [s.id, s.ordinal, s.agent]));
+      if (signature !== transcriptStageOptions) {
+        transcriptStageOptions = signature;
+        const all = node('option', '', '全部执行阶段');
+        all.value = '';
+        $('transcript-stage').replaceChildren(
+          all,
+          ...stages.map((s) => {
+            const option = node('option', '', `阶段 ${s.ordinal} · ${s.agent}`);
+            option.value = s.id;
+            return option;
+          }),
+        );
+        $('transcript-stage').value = transcriptStage;
+      }
+      const stage = transcriptStage;
       let page;
       try {
-        page = await api(`/sessions/${id}/transcript`);
+        page = await api(`/sessions/${id}/transcript${stage ? `?stage=${stage}` : ''}`);
       } catch (error) {
         if (error.status !== 404) throw error;
         page = { events: await api(`/sessions/${id}/events`) };
       }
-      if (id === selected) {
+      if (id === selected && stage === transcriptStage) {
         for (const e of page.events) transcriptRows.set(e.id, e);
         if (!transcriptLoaded) {
           transcriptCursor = page.nextBefore;

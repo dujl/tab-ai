@@ -66,21 +66,22 @@ API 与 Dashboard 使用同一服务，默认 `http://127.0.0.1:4317`。请求�
 
 以下路径均以 `/api/sessions/:id` 为前缀；不存在 Session 返回 404。
 
-| 子路径                     | 方法 / 参数                               | 行为                                                                   |
-| -------------------------- | ----------------------------------------- | ---------------------------------------------------------------------- |
-| `/events`                  | GET                                       | 最近 200 个公开框架事件，无分页                                        |
-| `/messages`                | POST `{text}`                             | 本节点工作输入；编排节点排队                                           |
-| `/begin`                   | POST                                      | 开始已保存的初始化任务                                                 |
-| `/stop`、`/close`、`/open` | POST                                      | 停止本轮、关闭、打开                                                   |
-| `/settings`                | GET / POST `{settings,revision}`          | 原生模型能力与本会话设置，乐观版本校验                                 |
-| `/replace-workspace`       | POST `{workspace}`                        | 当前绑定的空闲节点原地改目录，返回 201 Session；已有历史要求适配器支持 |
-| `/reset`                   | GET / POST `{revision}`                   | 查询能否重置或确认重置；任务节点保持身份，交互节点接续关系并归档原记录 |
-| `/detach`、`/attach`       | POST                                      | 原生终端交接；detach 返回 command/cwd                                  |
-| `/maintenance`             | GET                                       | 压缩能力、占用、revision、可选 lastCompaction                          |
-| `/compact`                 | POST `{revision}`                         | 受理原生压缩，返回 202；需查询实际结果                                 |
-| `/loops`                   | GET                                       | 已接入的持续项与 revision                                              |
-| `/loop-stop`               | POST `{loopId,revision}`                  | 停止精确来源并等待确认                                                 |
-| `/im-entry`                | GET / POST `{revision,confirmedUnknown?}` | 补建原 Bot/聊天的飞书入口；unknown 须明确确认，不是通道迁移            |
+| 子路径                     | 方法 / 参数                               | 行为                                                                          |
+| -------------------------- | ----------------------------------------- | ----------------------------------------------------------------------------- |
+| `/events`                  | GET                                       | 最近 200 个公开框架事件，无分页                                               |
+| `/transcript`              | GET `?before=&stage=`                     | 实际输入、公开回复与工具事件，120 条分页；可按本 Session 的执行阶段 UUID 筛选 |
+| `/messages`                | POST `{text}`                             | 本节点工作输入；编排节点排队                                                  |
+| `/begin`                   | POST                                      | 开始已保存的初始化任务                                                        |
+| `/stop`、`/close`、`/open` | POST                                      | 停止本轮、关闭、打开                                                          |
+| `/settings`                | GET / POST `{settings,revision}`          | 原生模型能力与本会话设置，乐观版本校验                                        |
+| `/replace-workspace`       | POST `{workspace}`                        | 当前绑定的空闲节点原地改目录，返回 201 Session；已有历史要求适配器支持        |
+| `/reset`                   | GET / POST `{revision}`                   | 查询能否重置或确认重置；任务节点保持身份，交互节点接续关系并归档原记录        |
+| `/detach`、`/attach`       | POST                                      | 原生终端交接；detach 返回 command/cwd                                         |
+| `/maintenance`             | GET                                       | 压缩能力、占用、revision、可选 lastCompaction                                 |
+| `/compact`                 | POST `{revision}`                         | 受理原生压缩，返回 202；需查询实际结果                                        |
+| `/loops`                   | GET                                       | 已接入的持续项与 revision                                                     |
+| `/loop-stop`               | POST `{loopId,revision}`                  | 停止精确来源并等待确认                                                        |
+| `/im-entry`                | GET / POST `{revision,confirmedUnknown?}` | 补建原 Bot/聊天的飞书入口；unknown 须明确确认，不是通道迁移                   |
 
 工作、下载、维护、排队输入、终端占用及绑定变化分别校验，不允许旧面板覆盖新状态。只影响选中节点，已有子节点目录不随之修改。
 
@@ -113,3 +114,31 @@ API 与 Dashboard 使用同一服务，默认 `http://127.0.0.1:4317`。请求�
 `POST /api/channels/:botId/role` 为 `{manager}`；`/details` 为 `{displayName,defaultWorkspace}`；`/group-mode` 为 `{chatId,mode}`，只支持飞书群。这些写入要求配置持久化服务存在。`POST /api/management` 接收 group_mode.get/set 的结构化请求，本机授权仍由入口构造。
 
 `GET /api/setup` 查询说明、当前流程和草稿；`POST /api/setup/start` 开始；`GET /api/setup/:id` 查询；对应 POST `/verify`、`/confirm`、`/cancel` 完成验证、确认或取消。平台字段以 `setup/service.ts` 的 setupInput 为准，建议使用网页或 CLI 向导，避免重复创建结果不确定的远端应用。
+
+## Agent 接力与执行阶段
+
+以下接口使用现有 Dashboard 访问令牌。接力只作用于指定逻辑 Session，不新增任务或切换聊天通道。
+
+| 接口                                            | 行为                                       |
+| ----------------------------------------------- | ------------------------------------------ |
+| GET /api/sessions/:id/relay                     | 执行阶段、关联报告、预览是否过期及队列状态 |
+| GET /api/sessions/:id/relay-models?agent=claude | 只读目标模型和思考深度目录，不启动业务任务 |
+| POST /api/sessions/:id/relay                    | 准备、确认、取消、提交核对或队列处理       |
+
+准备请求示例：
+
+```json
+{
+  "action": "prepare",
+  "agent": "claude",
+  "key": "client-generated-unique-key",
+  "continueTask": false,
+  "instructions": "优先核对测试结果"
+}
+```
+
+可选 settings 与模型设置接口同结构，按目标 Agent 目录校验。返回 202 和 stage；报告后台生成，不启动目标任务。重复 key 和相同参数复用原阶段，不同参数拒绝。
+
+确认请求：`{"action":"confirm","stageId":"目标阶段UUID","acceptFacts":false}`。报告 ready 且快照有效才激活；事实版必须明确 acceptFacts。原生上下文延迟至首次业务轮次建立；重复确认已激活阶段不重复执行。
+
+同一入口还支持 cancel、retry-input、acknowledge-input、resume-queue、retry-queue、dismiss-queue，均需 stageId。未知输入不自动重放；retry-input 和 retry-queue 是用户核对后的明确重试。流程见 [Agent 接力](agent-relay.md)。

@@ -1,3 +1,4 @@
+import { showAgentRelay } from './agent-relay.js';
 export function showReportDocument(doc) {
   const element = (tag, text) => {
     const e = document.createElement(tag);
@@ -296,7 +297,7 @@ export function createConsole({ api, refresh, selectSession, showError }) {
     normalizeTab = (value) =>
       value === 'children'
         ? 'structure'
-        : ['conversation', 'results', 'structure', 'records', 'todos'].includes(value)
+        : ['conversation', 'results', 'structure', 'records', 'todos', 'stages'].includes(value)
           ? value
           : 'structure';
   let state,
@@ -410,6 +411,7 @@ export function createConsole({ api, refresh, selectSession, showError }) {
     ['todos', 'Agent 待办'],
     ['records', '审批与执行'],
     ['results', '交付与经验'],
+    ['stages', '执行阶段'],
   ]) {
     const b = button(label, () => {
       tab = key;
@@ -630,19 +632,26 @@ export function createConsole({ api, refresh, selectSession, showError }) {
         const cum = usage.cumulative;
         const taskCum = usage.taskCumulative;
         const sub = usage.subtree;
+        const changed = (usage.resets || 0) > 0 || (usage.relays || 0) > 0;
+        const changes = [
+          usage.resets ? `${usage.resets} 次重置` : '',
+          usage.relays ? `${usage.relays} 次接力` : '',
+        ]
+          .filter(Boolean)
+          .join(' · ');
         const summary = el(
           'small',
           'session-usage',
           sub
             ? `总计 ${sub.total.short?.total ?? sub.total.total} · 自身 ${taskCum?.short?.total ?? cum.short?.total ?? cum.total}`
-            : (usage.resets ?? 0) > 0 && taskCum
+            : changed && taskCum
               ? `任务 ${taskCum.short?.total ?? taskCum.total} · 会话 ${cum.hasValue ? (cum.short?.total ?? cum.total) : '未上报'}`
               : `累计 ${cum.short?.total ?? cum.total} · 入 ${cum.short?.input ?? cum.input} / 出 ${cum.short?.output ?? cum.output}`,
         );
         summary.title = sub
-          ? `含 ${sub.descendantCount} 个子任务总计：${sub.total.total} tokens；本任务累计：${taskCum?.total ?? cum.total}${(usage.resets ?? 0) > 0 ? `（含 ${usage.resets} 次重置，当前会话 ${cum.total}）` : ''}；上下文 ${usage.context}`
-          : (usage.resets ?? 0) > 0 && taskCum
-            ? `本任务累计（含 ${usage.resets} 次重置${usage.compactions ? ` · ${usage.compactions} 次压缩` : ''}）：${taskCum.total} tokens；当前会话：${cum.total}；上下文 ${usage.context}`
+          ? `含 ${sub.descendantCount} 个子任务总计：${sub.total.total} tokens；本任务累计：${taskCum?.total ?? cum.total}${changed ? `（含 ${changes}，当前会话 ${cum.total}）` : ''}；上下文 ${usage.context}`
+          : changed && taskCum
+            ? `本任务累计（含 ${changes}${usage.compactions ? ` · ${usage.compactions} 次压缩` : ''}）：${taskCum.total} tokens；当前会话：${cum.total}；上下文 ${usage.context}`
             : `${cum.scope}（精确：累计 ${cum.total} · 入 ${cum.input} / 出 ${cum.output}）；上下文 ${usage.context}`;
         b.append(summary);
         if (usage.context !== '未上报') {
@@ -840,6 +849,7 @@ export function createConsole({ api, refresh, selectSession, showError }) {
       state.tasks,
       state.sessions,
       state.sessionReportStates,
+      state.agentStageStates,
       state.interactions,
       selectedKey,
       focusKey,
@@ -855,7 +865,24 @@ export function createConsole({ api, refresh, selectSession, showError }) {
     const panel = $('task-detail');
     panel.replaceChildren();
     if (tab === 'structure') renderStructure(panel, n);
-    else if (tab === 'results') renderResults(panel, n);
+    else if (tab === 'stages') {
+      if (!n.session) panel.append(el('p', 'muted', '任务尚未建立会话。'));
+      else {
+        panel.append(
+          button('交接给其他 Agent / 查看报告', () =>
+            showAgentRelay(api, n.session.id, state.agentCatalog, () => void refresh()),
+          ),
+        );
+        for (const stage of state.agentStageStates?.[n.session.id] || [])
+          panel.append(
+            el(
+              'p',
+              '',
+              `阶段 ${stage.ordinal} · ${stage.agent} · ${stage.state}${stage.phase ? ' · ' + stage.phase : ''}`,
+            ),
+          );
+      }
+    } else if (tab === 'results') renderResults(panel, n);
   }
   function renderStructure(panel, n) {
     const scope = tree.nodes.get(focusKey) || taskRoot(tree, n.key) || n,
@@ -1859,7 +1886,7 @@ export function createExecutionRecords({ api, showError }) {
           `上下文 ${token.contextShort ?? token.context}`,
           `当前会话 ${token.totalShort ?? token.total}`,
         ];
-        if ((token.resets ?? 0) > 0 && token.taskCumulative)
+        if (((token.resets ?? 0) > 0 || (token.relays ?? 0) > 0) && token.taskCumulative)
           parts.push(`任务累计 ${token.taskCumulative.short?.total ?? token.taskCumulative.total}`);
         if (token.subtree)
           parts.push(
@@ -2162,7 +2189,8 @@ export function createTokenUsage({ api }) {
     runs = [],
     older = false,
     currentNativeId,
-    resets = 0;
+    resets = 0,
+    relays = 0;
   const time = (at) => (at === undefined ? '未上报' : new Date(at).toLocaleString());
   const shortTime = (at) => {
     if (at === undefined) return '未上报';
@@ -2233,6 +2261,10 @@ export function createTokenUsage({ api }) {
   const draw = (info) => {
     currentNativeId = info.currentNativeId;
     resets = info.resets ?? 0;
+    relays = info.relays ?? 0;
+    const changes = [resets ? `${resets} 次重置` : '', relays ? `${relays} 次接力` : '']
+      .filter(Boolean)
+      .join(' · ');
     const compactions = info.compactions ?? 0;
     const sub = info.subtree;
     const scopeEl = $('token-usage-scope');
@@ -2246,6 +2278,7 @@ export function createTokenUsage({ api }) {
     if (lifecycleEl) {
       const tags = [
         resets > 0 ? `重置 ${resets} 次` : '',
+        relays > 0 ? `接力 ${relays} 次` : '',
         compactions > 0 ? `压缩 ${compactions} 次` : '',
         sub ? `含 ${sub.descendantCount} 个子任务` : '',
       ].filter(Boolean);
@@ -2314,9 +2347,9 @@ export function createTokenUsage({ api }) {
     const taskCum = info.taskCumulative ?? info.cumulative;
     const cards = element('div', undefined, 'usage-cards');
     const sessionCard = buildCard({
-      title: resets > 0 || sub ? '当前会话' : '会话累计',
+      title: resets > 0 || relays > 0 || sub ? '当前会话' : '会话累计',
       badgeText:
-        resets > 0
+        resets > 0 || relays > 0
           ? '当前原生上下文'
           : info.cumulative.partial
             ? '部分统计'
@@ -2324,7 +2357,7 @@ export function createTokenUsage({ api }) {
               ? `已压缩 ${compactions} 次`
               : undefined,
       badgeClass:
-        resets > 0
+        resets > 0 || relays > 0
           ? 'usage-badge is-muted'
           : info.cumulative.partial
             ? 'record-status pending'
@@ -2356,7 +2389,7 @@ export function createTokenUsage({ api }) {
         .filter(Boolean)
         .join('；');
       const taskHint =
-        resets > 0
+        resets > 0 || relays > 0
           ? [
               `当前会话 ${info.cumulative.hasValue ? (info.cumulative.short?.total ?? info.cumulative.total) : '未上报'} + 历史重置 ${taskCum.archivedShort ?? taskCum.archivedTotal}`,
               taskCum.note,
@@ -2377,10 +2410,10 @@ export function createTokenUsage({ api }) {
           hint: subHint,
         }),
         buildCard({
-          title: resets > 0 ? '本任务累计' : '本任务自身',
+          title: resets > 0 || relays > 0 ? '本任务累计' : '本任务自身',
           badgeText:
-            resets > 0
-              ? `含 ${resets} 次重置`
+            resets > 0 || relays > 0
+              ? `含 ${changes}`
               : compactions > 0
                 ? `已压缩 ${compactions} 次`
                 : taskCum.partial
@@ -2394,9 +2427,9 @@ export function createTokenUsage({ api }) {
           hint: taskHint,
         }),
       );
-      if (resets > 0) cards.append(sessionCard);
+      if (resets > 0 || relays > 0) cards.append(sessionCard);
       cards.append(roundCard);
-    } else if (resets > 0) {
+    } else if (resets > 0 || relays > 0) {
       const taskHint = [
         `当前会话 ${info.cumulative.hasValue ? (info.cumulative.short?.total ?? info.cumulative.total) : '未上报'} + 历史重置 ${taskCum.archivedShort ?? taskCum.archivedTotal}`,
         taskCum.note,
@@ -2406,7 +2439,7 @@ export function createTokenUsage({ api }) {
       cards.append(
         buildCard({
           title: '本任务累计',
-          badgeText: `含 ${resets} 次重置${compactions > 0 ? ` · ${compactions} 次压缩` : ''}`,
+          badgeText: `含 ${changes}${compactions > 0 ? ` · ${compactions} 次压缩` : ''}`,
           badgeClass: taskCum.partial ? 'record-status pending' : 'usage-badge',
           totalText: taskCum.hasValue ? (taskCum.short?.total ?? taskCum.total) : '未上报',
           totalExact: taskCum.total,
@@ -2427,7 +2460,7 @@ export function createTokenUsage({ api }) {
       { title: info.currentRound.label, data: info.currentRound },
       { title: '当前会话', data: info.cumulative },
     ];
-    if (resets > 0) cols.push({ title: '本任务累计', data: taskCum });
+    if (resets > 0 || relays > 0) cols.push({ title: '本任务累计', data: taskCum });
     if (sub) cols.push({ title: '含子任务总计', data: sub.total });
     const table = element('table', undefined, 'usage-table');
     const header = element('thead'),
@@ -2465,7 +2498,7 @@ export function createTokenUsage({ api }) {
       ),
       element('td', info.cumulative.scope),
     );
-    if (resets > 0) foot.append(element('td', taskCum.scope));
+    if (resets > 0 || relays > 0) foot.append(element('td', taskCum.scope));
     if (sub)
       foot.append(
         element(
@@ -2496,8 +2529,14 @@ export function createTokenUsage({ api }) {
           const head = element('div', undefined, 'usage-child-head');
           const titleBox = element('div', undefined, 'usage-child-title');
           titleBox.append(element('strong', child.title), element('span', child.agent, 'tag'));
-          if (child.resets > 0)
-            titleBox.append(element('span', `重置 ${child.resets} 次`, 'usage-badge is-muted'));
+          if (child.resets > 0 || child.relays > 0)
+            titleBox.append(
+              element(
+                'span',
+                `${child.resets || 0} 次重置 · ${child.relays || 0} 次接力`,
+                'usage-badge is-muted',
+              ),
+            );
           if (child.compactions > 0)
             titleBox.append(
               element('span', `压缩 ${child.compactions} 次`, 'usage-badge is-muted'),
@@ -2512,7 +2551,7 @@ export function createTokenUsage({ api }) {
           head.append(titleBox, totalEl);
           item.append(head);
           const metaText = child.task.hasValue
-            ? `入 ${child.task.short?.input ?? child.task.input} / 出 ${child.task.short?.output ?? child.task.output}${child.resets > 0 ? ` · 当前会话 ${child.session.hasValue ? (child.session.short?.total ?? child.session.total) : '未上报'}` : ''}`
+            ? `入 ${child.task.short?.input ?? child.task.input} / 出 ${child.task.short?.output ?? child.task.output}${child.resets > 0 || child.relays > 0 ? ` · 当前会话 ${child.session.hasValue ? (child.session.short?.total ?? child.session.total) : '未上报'}` : ''}`
             : '尚未采集用量';
           const metaEl = element('p', metaText, 'usage-child-meta');
           if (child.task.hasValue)
@@ -2555,7 +2594,7 @@ export function createTokenUsage({ api }) {
       if (run.partial) titleBox.append(element('span', '部分统计', 'usage-badge is-warn'));
       if (
         (run.nativeId && currentNativeId && run.nativeId !== currentNativeId) ||
-        (resets > 0 && !currentNativeId && run.nativeId)
+        ((resets > 0 || relays > 0) && !currentNativeId && run.nativeId)
       )
         titleBox.append(element('span', '已重置上下文', 'usage-badge is-muted'));
       titleBox.append(element('span', shortTime(run.sampledAt ?? run.startedAt), 'footnote'));
@@ -2666,7 +2705,7 @@ export function createTokenUsage({ api }) {
         older = false;
         signature = '';
         currentNativeId = undefined;
-        resets = 0;
+        ((resets = 0), (relays = 0));
         $('token-usage-context').textContent = '正在读取当前会话用量…';
         $('token-usage-context').title = '';
         const ctxMeta = $('token-usage-context-meta');

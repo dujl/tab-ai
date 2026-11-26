@@ -61,11 +61,11 @@ export function sessionInformation(
           : usage.total,
         value: usage.total,
       },
-      ...(usage.resets > 0
+      ...(usage.resets > 0 || usage.relays > 0
         ? [
             {
               label: '本任务累计',
-              shortValue: `${usage.taskCumulative.short.total}（含 ${usage.resets} 次重置${usage.compactions > 0 ? ` · ${usage.compactions} 次压缩` : ''}）`,
+              shortValue: `${usage.taskCumulative.short.total}（含 ${[usage.resets ? `${usage.resets} 次重置` : '', usage.relays ? `${usage.relays} 次接力` : '', usage.compactions ? `${usage.compactions} 次压缩` : ''].filter(Boolean).join(' · ')}）`,
               value: `${usage.taskCumulative.total} tokens（${usage.taskCumulative.scope}）`,
             },
           ]

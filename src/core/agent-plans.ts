@@ -24,10 +24,12 @@ const runSchema = z.object({
   startedAt: z.number(),
 });
 const snapshotSchema = agentPlanSchema.extend({ runId: z.string() });
+const sameStage = (event: StoredEvent, session: Session) =>
+  event.stageId ? event.stageId === session.currentStageId : !session.executionRevision;
 export function priorAgentPlan(store: Store, session: Session): AgentPlan | undefined {
   const event = store.latestEvent(session.id, 'agent_plan'),
     reset = store.latestEvent(session.id, 'context_reset');
-  if (!event || (reset && event.id < reset.id)) return;
+  if (!event || !sameStage(event, session) || (reset && event.id < reset.id)) return;
   try {
     const data = JSON.parse(event.text);
     if (!session.nativeId || data.nativeId !== session.nativeId || data.source !== session.agent)
@@ -54,7 +56,7 @@ export function agentPlans(
     run = parse(runSchema, latest),
     reset = store.latestEvent(session.id, 'context_reset');
   const currentRun =
-    run && (!reset || latest!.id > reset.id)
+    run && sameStage(latest!, session) && (!reset || latest!.id > reset.id)
       ? {
           ...run,
           status:
@@ -81,7 +83,7 @@ export function agentPlans(
         title: life?.title ?? '原生执行计划',
         runStatus: status,
         current: currentRun?.runId === plan.runId,
-        archived: !!reset && event.id < reset.id,
+        archived: !sameStage(event, session) || (!!reset && event.id < reset.id),
         counts: plan.steps.reduce((v, s) => ({ ...v, [s.status]: v[s.status] + 1 }), {
           pending: 0,
           in_progress: 0,
@@ -107,7 +109,7 @@ export function agentPlansText(store: Store, session: Session): string {
       : undefined,
     ...data.plans.map(
       (plan) =>
-        `${plan.current ? '最近一轮' : '历史轮次'} · ${plan.title}${plan.archived ? '（重置前）' : ''}\n${plan.explanation ?? ''}\n${plan.steps.map((s, i) => `${i + 1}. [${labels[s.status]}] ${s.text}`).join('\n') || 'Agent 已清空此轮待办。'}`,
+        `${plan.current ? '最近一轮' : '历史轮次'} · ${plan.title}${plan.archived ? '（历史上下文）' : ''}\n${plan.explanation ?? ''}\n${plan.steps.map((s, i) => `${i + 1}. [${labels[s.status]}] ${s.text}`).join('\n') || 'Agent 已清空此轮待办。'}`,
     ),
     !data.plans.length ? '尚无已采集的 Agent 待办；Agent 上报执行计划后会自动显示。' : undefined,
     data.note,

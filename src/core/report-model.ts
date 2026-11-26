@@ -54,7 +54,12 @@ export interface SessionReport {
   taskRevision?: number;
   version: number;
   sourceKey: string;
-  trigger: 'close' | 'task' | 'manual' | 'progress';
+  trigger: 'close' | 'task' | 'manual' | 'progress' | 'agent_handoff';
+  sourceStageId?: string;
+  evidenceFingerprint?: string;
+  previousReportId?: string;
+  context?: { workspace: string; instructions?: string; objective?: string; criteria?: string };
+  uses?: { kind: 'close' | 'agent_handoff'; targetStageId?: string; at: number }[];
   sourceEventId: number;
   endEventId: number;
   capturePending?: boolean;

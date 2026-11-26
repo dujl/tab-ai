@@ -43,6 +43,13 @@ export class ReportStore {
       version,
       sourceKey,
       trigger,
+      sourceStageId: session.currentStageId,
+      context: {
+        workspace: session.workspace,
+        instructions: session.instructions,
+        objective: task?.objective ?? session.topicObjective,
+        criteria: task?.criteria ?? session.topicCriteria,
+      },
       sourceEventId: eventId,
       endEventId: eventId,
       ...(capturePending ? { capturePending: true } : {}),
@@ -80,6 +87,20 @@ export class ReportStore {
   get(id: string): SessionReport | undefined {
     const row = this.db.prepare('SELECT data FROM session_reports WHERE id=?').get(id);
     return row ? JSON.parse(String(row.data)) : undefined;
+  }
+  reusable(sessionId: string, fingerprint: string): SessionReport | undefined {
+    return this.list(sessionId, 50).find(
+      (r) => r.state === 'ready' && r.evidenceFingerprint === fingerprint && !!r.body,
+    );
+  }
+  use(id: string, kind: 'close' | 'agent_handoff', targetStageId?: string): void {
+    const report = this.get(id);
+    if (!report) throw Error('报告不存在');
+    report.uses ??= [];
+    if (!report.uses.some((u) => u.kind === kind && u.targetStageId === targetStageId)) {
+      report.uses.push({ kind, targetStageId, at: Date.now() });
+      this.save(report);
+    }
   }
   latestReady(sessionIds: string[]): SessionReport[] {
     if (!sessionIds.length) return [];

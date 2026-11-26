@@ -31,6 +31,9 @@ export class SessionSettings {
   private cache = new Map<string, { view: SettingsView; at: number }>();
   private jobs = new Map<string, Promise<void>>();
   private abort = new AbortController();
+  invalidate(id: string): void {
+    this.cache.delete(id);
+  }
   constructor(
     private store: Store,
     private agents: Record<AgentKind, AgentAdapter>,
@@ -62,6 +65,11 @@ export class SessionSettings {
         if (!adapter.models) throw new Error('unsupported');
         const signal = AbortSignal.any([this.abort.signal, AbortSignal.timeout(20_000)]);
         const models = modelsSchema.parse(await adapter.models(session, signal));
+        if (
+          this.store.get(id)?.agent !== session.agent ||
+          this.store.get(id)?.currentStageId !== session.currentStageId
+        )
+          return;
         signal.throwIfAborted();
         if (!models.length || new Set(models.map((m) => m.id)).size !== models.length)
           throw new Error('Invalid model catalog');
