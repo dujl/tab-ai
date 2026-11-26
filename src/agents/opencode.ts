@@ -473,6 +473,7 @@ export class OpenCodeAdapter implements AgentAdapter {
       );
       combined.throwIfAborted();
       if (result.info.sessionID !== nativeId) throw new Error('OpenCode 返回了其他会话的结果');
+      hooks.inputAccepted?.({ nativeId, evidence: 'OpenCode message response' });
       const usage = openCodeUsage(result.info);
       if (usage)
         hooks.usage?.({ ...usage, ...(result.info.id ? { sampleId: result.info.id } : {}) });

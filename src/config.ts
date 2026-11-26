@@ -51,7 +51,12 @@ const schema = z
         traecli: z
           .object({ command: z.string().default('traecli') })
           .default({ command: 'traecli' }),
-        agy: z.object({ command: z.string().default('agy') }).default({ command: 'agy' }),
+        agy: z
+          .object({
+            command: z.string().default('agy'),
+            inputAcceptanceTimeoutMs: z.number().int().min(1000).max(1_800_000).optional(),
+          })
+          .default({ command: 'agy' }),
         codex: z.object({ command: z.string().default('codex') }).default({ command: 'codex' }),
         claude: z.object({ command: z.string().optional() }).default({}),
         opencode: z

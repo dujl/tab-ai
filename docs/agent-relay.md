@@ -6,7 +6,7 @@
 
 ## 使用入口
 
-Dashboard 的任务页选择“执行阶段”，或在对话工具栏选择“Agent 接力与阶段”。选择目标 Agent、目标能力目录中的模型与思考深度，填写可选的接续要求，再生成预览。默认交接后等待新输入；勾选立即继续后，确认成功才提交接续任务。模型目录读取用于检查目标能力，不会启动业务轮次。
+Dashboard 的任务页选择“执行阶段”，或在对话工具栏选择“Agent 接力与阶段”。选择目标 Agent、目标能力目录中的模型与思考深度，选择目标审批策略、填写可选的接续要求，再生成预览。默认交接后等待新输入；勾选立即继续后，确认成功才提交接续任务。模型目录读取用于检查目标能力，不会启动业务轮次。
 
 IM 中发送 `/tab relay`。飞书管理菜单的“更多操作”包含接力入口；其他通道通过“持续任务与终端”进入。不支持卡片的通道使用同一后台命令与文字状态。
 
@@ -14,6 +14,7 @@ IM 中发送 `/tab relay`。飞书管理菜单的“更多操作”包含接力�
 /tab relay
 /tab relay choose
 /tab relay prepare claude
+/tab relay prepare agy continue {"approvalPolicy":"auto"}
 /tab relay prepare opencode continue {"model":"目标模型ID","provider":"目标Provider"}
 /tab relay confirm <阶段ID>
 /tab relay confirm <阶段ID> accept-facts
@@ -49,7 +50,7 @@ IM 中发送 `/tab relay`。飞书管理菜单的“更多操作”包含接力�
 
 新事件和用量轮次关联 stageId；旧事件没有可靠归属时留空，不按时间猜测。任务累计用量保留跨阶段消耗；当前上下文只使用当前原生会话的数据，接力次数与重置次数分别记录。切换会清除旧阶段的模型缓存、原生指令快照与自动允许策略，目标阶段使用自己的能力和审批模式。
 
-审批策略覆盖在接力时清除。Codex/TRAE CLI 按框架默认使用 `on-request`；Claude Code、OpenCode、Antigravity CLI 沿用自己的原生默认配置，不接收其他 Agent 的模式名称。新阶段需要调整授权时使用本会话的审批策略入口。
+旧阶段审批授权在接力时清除，预览会展示目标策略。可显式选择目标 Agent 支持的策略；未指定时 Codex/TRAE CLI 按框架默认使用 `on-request`；Claude Code、OpenCode、Antigravity CLI 沿用自己的原生默认配置，不接收其他 Agent 的模式名称。新阶段需要调整授权时使用本会话的审批策略入口。
 
 首次登记已有数据前，在数据目录的 backups 中创建权限 0600 的 SQLite 快照。登记保持现有 Session/nativeId、聊天绑定与会话更新时间，不重放任务。阶段属于内部执行历史，不新增任务树节点。
 
@@ -59,7 +60,9 @@ IM 中发送 `/tab relay`。飞书管理菜单的“更多操作”包含接力�
 
 报告未就绪、预览过期或激活前失败，原绑定保持不变。激活后的执行失败保留新阶段，不自动退回旧 Agent，也不重放可能已生效的业务操作。
 
-原生输入缺少提交确认，或提交期间服务重启，会显示 unconfirmed，后续执行被阻止。核对原生历史后，明确选择已收到或允许下一轮重试：
+输入快照区分 prepared（已准备）、sending（发送中）与 submitted（已有受理证据）。创建 nativeId、SDK 初始化和发送前回调不作为受理依据：Codex/TRAE CLI 使用 turn/start 响应，AGY 使用本轮有效提示事件或提示响应，Claude Code 使用本轮公开输出、结果或工具请求，OpenCode 使用消息响应。同一授权执行轮成功调用框架报告读取接口也能提供该轮已开始处理的证据。受理后业务失败保留受理事实，不等同于任务成功。
+
+执行阶段的 inputReceipt 保存 runId、nativeId、可用的 nativeTurnId、证据类型、事件与时间。历史 submitted 记录没有回执时明确标为未验证，不回填猜测。原生输入缺少受理证据，或发送期间服务重启，会显示 unconfirmed，后续执行被阻止。AGY 会从该 ACP 进程的私有日志中识别本轮原生模型初始化等确定失败，并立即终止等待、返回分类后的原因；临时日志仅供本进程诊断、权限为 0600，退出后清理，不将原文或凭证发送给用户。不能确定原因时不猜测。AGY 在默认 90 秒内没有任何本轮处理证据时，会终止等待并提示检查模型、登录与网络；可通过 `agents.agy.inputAcceptanceTimeoutMs` 调整。收到本轮有效事件后不再使用首次受理计时器，后续仍受单轮时限约束。核对原生历史后，明确选择已收到或允许下一轮重试：
 
 ```text
 /tab relay acknowledge-input <阶段ID>
@@ -77,3 +80,7 @@ IM 中发送 `/tab relay`。飞书管理菜单的“更多操作”包含接力�
 resume-queue 只恢复尚未执行的消息；retry-queue 是用户核对后允许重试未知消息，可能重复操作。dismiss-queue 明确放弃队列。恢复目的地是本 Session 当前 Agent，不会跨聊天重定向；原权限和绑定仍需有效。
 
 接口见 [API](api.md)，持久化职责见 [数据库](database.md)，相关验证见 [测试](testing.md)。
+
+## 报告读取回执
+
+框架在当前授权执行轮的 task_report_read 成功读取 ready 报告后记录 task_report_read 事件，包含读取方阶段、runId、nativeId、报告 ID / 版本与来源阶段。当前接力报告的最新回执同时保存在 transition.reportRead，Web 阶段面板和对话历史可查看；IM 的接力状态也显示回执。没有就绪正文、无权读取、过期执行轮及用户在网页预览文档均不记为 Agent 读取。回执表示服务端已向当前调用提供报告全文，不能证明传输末端接收或模型理解。

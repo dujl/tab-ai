@@ -6,10 +6,14 @@ export function supportsAutoApproval(
   request: Pick<Interaction, 'kind' | 'approvalAutomation' | 'approvalOptions'>,
 ) {
   return (
-    (agent === 'codex' || agent === 'traecli') &&
+    (agent === 'codex' || agent === 'traecli' || agent === 'agy') &&
     request.kind === 'approval' &&
     request.approvalAutomation ===
-      (agent === 'traecli' ? 'traecli-command-file' : 'codex-command-file') &&
+      (agent === 'agy'
+        ? 'agy-command-file'
+        : agent === 'traecli'
+          ? 'traecli-command-file'
+          : 'codex-command-file') &&
     approvalOptions(request).some((o) => o.id === 'allow')
   );
 }
@@ -25,12 +29,16 @@ export function nativeApprovalPolicy(
   session: Pick<Session, 'agent' | 'approvalPolicy'>,
 ): string | undefined {
   const mode = selectedApprovalPolicy(session);
+  if (session.agent === 'agy' && mode === 'auto-allow') return 'default';
   if (
     (session.agent === 'codex' || session.agent === 'traecli') &&
     ['on-request-auto-review', 'auto-allow'].includes(mode)
   )
     return 'on-request';
   return mode === 'native' ? undefined : mode;
+}
+export function manualApprovalPolicy(agent: AgentKind): string {
+  return agent === 'agy' ? 'default' : 'on-request';
 }
 export function nativeApprovalReviewer(session: Pick<Session, 'agent' | 'approvalPolicy'>) {
   if (
@@ -125,6 +133,12 @@ export function approvalModes(
         id: 'auto',
         label: '原生自动模式',
         description: '在 Antigravity CLI 原生沙箱与策略内自动处理常规操作，高风险操作仍询问确认。',
+      },
+      {
+        id: 'auto-allow',
+        label: '本会话自动允许',
+        description:
+          '框架自动允许本 Session 支持的命令与文件修改审批，不自动回答提问或确认登录授权；保留原生沙箱及组织限制，关闭、重置、接力或清除授权后取消。与原生 auto 模式不同。',
       },
       {
         id: 'plan',

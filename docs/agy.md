@@ -80,11 +80,49 @@ IM 继续同一上下文。未设置通道背景和附加指令的会话可使�
 通过 ACP `session/request_permission` 透出；选择“本会话允许”时仅在当前 tab-ai Session
 内存记录精确请求范围并回传原生单次允许，不修改全局配置，不跨会话共享。
 
+发送输入前，适配器会检查 ACP 提供的模型目录及当前模型。目录为空或当前模型不在目录中时，
+本轮停止并提示刷新模型或重新选择，不自动换模型、不新建替代上下文。原生默认模型可能依赖
+远端目录解析；目录请求连接中断时，即使其他进程能联网，本轮仍可能初始化失败。
+
+执行期间会检查本进程的原生日志。模型执行器初始化失败会标记为执行失败；即使 ACP 把错误
+以普通文字回复并返回 `end_turn`，也不会记为成功。普通回复中引用错误信息不会仅凭文字触发
+失败。未取得首次受理确认时，默认 90 秒返回结果未确认提示，可通过
+`agents.agy.inputAcceptanceTimeoutMs` 调整；这些情形均不会自动重放用户请求。
+
 工具记录、执行计划（ACP `plan`）和 Token 统计（ACP `usage_update` 与 `session/prompt`
 用量）均来自原生事件；没有上报的值显示未知。任务编排通过会话专属 HTTP MCP 服务器
 `tab_ai_tasks` 注入到 `session/new` / `session/resume` / `session/load` 的 `mcpServers`。
 
 ## 排查
+
+### macOS 后台运行
+
+使用 macOS 钥匙串保存原生登录凭证时，应将 tab-ai 放在当前用户图形登录域的
+LaunchAgent 中运行。终端和后台进程即使属于同一个 Unix 用户、使用同一个 `HOME`，
+仍可能属于不同的安全登录会话；在终端手动运行 AGY 成功，不保证其他登录会话里的进程
+也能读取该凭证。分配伪终端或仅设置 `HOME` 无法替代正确的安全登录会话。
+
+LaunchAgent 的 `ProgramArguments` 使用 Node 和 tab-ai `dist/cli.js` 的绝对路径，
+加上 `--config /path/to/config.json serve`，并设置包含原生 Agent 命令的 `PATH`。
+配置可保存在 `~/Library/LaunchAgents/com.tab-ai.plist`，通过当前用户登录域加载：
+
+```sh
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.tab-ai.plist
+launchctl print gui/$(id -u)/com.tab-ai
+```
+
+迁移服务前先确认没有运行中的任务，停止旧进程后再启动同一配置的新进程，避免两个实例
+同时占用数据库和端口。继续使用已有配置和凭证存储，不将 OAuth 令牌或密码写入 plist。
+LaunchAgent 跟随用户登录会话，不提供用户退出图形登录后的钥匙串访问保证。
+
+### 认证与连接
+
+收到 `Authentication required` 时，先确认原生 CLI 是否能在运行服务的同一系统账号下登录。
+macOS 原生日志若同时包含钥匙串读取失败（`keyring`、`exit status 36`）和
+`Silent sign-in failed`，表示此进程未能取得登录凭证，不足以证明账号授权已过期。
+请先确认服务处于正确的图形登录会话，再检查登录钥匙串访问和 AGY 登录状态；必要时完成
+原生重新登录。tab-ai 会返回对应中文说明，不自动启动登录、不读取或复制凭证，也不重放本轮输入。
+初始化早期单独出现“未登录”警告、随后成功从钥匙串登录，不会仅凭这条警告中止执行。
 
 对接失败时先核对运行服务账号的 `PATH`、配置中的 `agents.agy.command`、原生版本与登录
 状态；`doctor` 的可执行文件检查不等于模型调用已经成功。原生恢复失败会保留失败信息，

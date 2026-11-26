@@ -240,6 +240,12 @@ export class ClaudeAdapter implements AgentAdapter {
       capturedNativeId = false;
     const toolNames = new Map<string, string>();
     const plans = new ClaudePlans(priorPlan);
+    let inputAccepted = false;
+    const acceptInput = (evidence: string) => {
+      if (inputAccepted) return;
+      inputAccepted = true;
+      hooks.inputAccepted?.({ nativeId: session.nativeId, evidence });
+    };
     hooks.input?.({
       text,
       nativeId: session.nativeId,
@@ -293,6 +299,7 @@ export class ClaudeAdapter implements AgentAdapter {
           : {}),
         ...(grantedRules.length ? { allowedTools: [...new Set(grantedRules)] } : {}),
         canUseTool: async (tool, input, options) => {
+          acceptInput('SDK tool request');
           if (
             taskBridge &&
             /^mcp__tab_ai_tasks__(?:task_(list|create|report|review|cancel|progress|report_read|experience)|topic_report)$/.test(
@@ -398,6 +405,11 @@ export class ClaudeAdapter implements AgentAdapter {
           hooks.nativeId(message.session_id);
           capturedNativeId = true;
         }
+        if (
+          (message.type === 'assistant' || message.type === 'result') &&
+          message.session_id === session.nativeId
+        )
+          acceptInput('SDK ' + message.type + ' message');
         if (
           message.type === 'system' &&
           message.subtype === 'init' &&

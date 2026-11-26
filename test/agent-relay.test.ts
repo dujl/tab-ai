@@ -30,6 +30,10 @@ function setup() {
   f.agent.handler = async (r) => {
     r.hooks.nativeId(r.session.nativeId ?? `native-${++sequence}`);
     r.hooks.input?.({ text: r.text, nativeId: r.session.nativeId });
+    r.hooks.inputAccepted?.({
+      nativeId: r.session.nativeId,
+      evidence: 'test native acknowledgement',
+    });
     r.hooks.usage?.({
       source: r.session.agent,
       total: { inputTokens: 100, outputTokens: 20, totalTokens: 120 },

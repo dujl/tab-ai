@@ -188,12 +188,16 @@ test('TRAE unsupported and foreign approvals reject without authorizing; cancell
       chmodSync(executable, 0o755);
       const s = f.store.create({ ...incoming('').route, platform: 'local' }, 'traecli', f.dir);
       let asks = 0;
+      const cancel = new AbortController();
       await assert.rejects(
         new TraecliAdapter(executable).run({
           session: s,
           text: mode,
-          signal: AbortSignal.timeout(mode === 'hang' ? 500 : 3000),
+          signal: AbortSignal.any([cancel.signal, AbortSignal.timeout(5000)]),
           hooks: {
+            inputAccepted() {
+              if (mode === 'hang') cancel.abort(new Error('cancel accepted native turn'));
+            },
             nativeId(id) {
               s.nativeId = id;
             },

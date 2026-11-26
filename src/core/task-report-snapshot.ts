@@ -14,6 +14,7 @@ export function taskReportFingerprint(store: Store, session: Session): string {
         settings: session.settings,
         workspace: session.workspace,
         instructions: session.instructions,
+        approvalPolicy: session.approvalPolicy,
         title: session.title,
         routeKey: session.routeKey,
         goal: task?.objective ?? session.topicObjective,

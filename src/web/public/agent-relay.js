@@ -4,7 +4,7 @@ const labels = {
   activating: '正在交接',
   awaiting_input: '已交接，等待首次输入',
   submitting: '正在提交交接资料',
-  submitted: '交接资料已提交',
+  submitted: '交接输入已记录提交',
   failed: '失败',
   unconfirmed: '提交结果待核对',
   cancelled: '已取消',
@@ -47,6 +47,8 @@ export function showAgentRelay(api, sessionId, agents, onChange = () => {}) {
     agent = element('select'),
     model = element('select'),
     effort = element('select'),
+    approval = element('select'),
+    approvalNote = element('p'),
     instructions = element('textarea'),
     continueTask = element('input'),
     prepare = element('button', '生成接力预览'),
@@ -54,6 +56,8 @@ export function showAgentRelay(api, sessionId, agents, onChange = () => {}) {
     close = element('button', '关闭面板');
   dialog.className = 'relay-dialog';
   error.className = 'form-error';
+  approvalNote.className = 'relay-approval-note';
+  approvalNote.className = 'relay-approval-note';
   error.setAttribute('role', 'alert');
   const label = (text, input) => {
     const l = element('label', text);
@@ -124,6 +128,10 @@ export function showAgentRelay(api, sessionId, agents, onChange = () => {}) {
     const current = ++generation;
     prepare.disabled = true;
     error.textContent = '';
+    approval.replaceChildren(element('option', '沿用目标 Agent 默认'));
+    approval.firstElementChild.value = '';
+    approval.disabled = true;
+    approvalNote.textContent = '';
     model.replaceChildren(element('option', '正在读取目标模型…'));
     model.disabled = true;
     try {
@@ -132,6 +140,16 @@ export function showAgentRelay(api, sessionId, agents, onChange = () => {}) {
       );
       if (current !== generation || !dialog.open) return;
       models = data.models;
+      approval.replaceChildren();
+      for (const mode of data.approvalModes || []) {
+        const option = element('option', mode.label);
+        option.value = mode.id;
+        option.dataset.description = mode.description;
+        approval.append(option);
+      }
+      approval.value = data.defaultApprovalPolicy || 'native';
+      approval.disabled = false;
+      approval.onchange();
       model.replaceChildren(element('option', '沿用目标 Agent 默认'));
       model.firstElementChild.value = '';
       for (const [i, m] of models.entries()) {
@@ -175,6 +193,29 @@ export function showAgentRelay(api, sessionId, agents, onChange = () => {}) {
           ),
         );
         if (t?.error) section.append(element('p', t.error));
+        if (stage.state === 'preparing' && stage.approval)
+          section.append(
+            element(
+              'p',
+              `目标审批：${stage.approval.label}。${stage.approval.description} 旧阶段授权不继承。`,
+            ),
+          );
+        if (t?.inputReceipt)
+          section.append(
+            element(
+              'p',
+              `原生已受理交接输入 · ${t.inputReceipt.evidence} · ${new Date(t.inputReceipt.at).toLocaleString()}`,
+            ),
+          );
+        else if (t?.phase === 'submitted')
+          section.append(element('p', '此历史提交记录没有原生受理回执。'));
+        if (t?.reportRead)
+          section.append(
+            element(
+              'p',
+              `报告全文已由框架提供 · v${t.reportRead.version} · 运行 ${t.reportRead.runId}；不代表模型已正确理解。`,
+            ),
+          );
         if (stage.stale) section.append(element('p', '预览后任务状态已变化，请取消并重新生成。'));
         if (stage.report) {
           const r = stage.report;
@@ -272,6 +313,8 @@ export function showAgentRelay(api, sessionId, agents, onChange = () => {}) {
     label('目标 Agent', agent),
     label('模型', model),
     label('思考深度', effort),
+    label('目标审批策略', approval),
+    approvalNote,
     label('接续要求', instructions),
     label('报告确认后立即继续任务（不选则等待输入）', continueTask),
     prepare,
@@ -286,6 +329,7 @@ export function showAgentRelay(api, sessionId, agents, onChange = () => {}) {
         key: relayKey(),
         continueTask: continueTask.checked,
         instructions: instructions.value,
+        ...(approval.value ? { approvalPolicy: approval.value } : {}),
         ...(m
           ? {
               settings: {
@@ -299,6 +343,9 @@ export function showAgentRelay(api, sessionId, agents, onChange = () => {}) {
     });
   };
   agent.onchange = () => void loadModels();
+  approval.onchange = () => {
+    approvalNote.textContent = approval.selectedOptions[0]?.dataset.description || '';
+  };
   model.onchange = drawEffort;
   close.onclick = () => dialog.close();
   refresh.onclick = () => void reload();

@@ -792,7 +792,7 @@ export class Store {
     return this.db
       .prepare(
         `SELECT id,session_id AS sessionId,stage_id AS stageId,type,text,at FROM events
-      WHERE session_id=? AND id<? AND (? IS NULL OR stage_id=?) AND type IN ('user','assistant','tool','agent_tool','agent_input','error','decision','agent_run','topic_summary_input')
+      WHERE session_id=? AND id<? AND (? IS NULL OR stage_id=?) AND type IN ('user','assistant','tool','agent_tool','agent_input','error','decision','agent_run','topic_summary_input','task_report_read')
       ORDER BY id DESC LIMIT ?`,
       )
       .all(

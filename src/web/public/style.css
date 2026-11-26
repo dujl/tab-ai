@@ -2771,7 +2771,7 @@ main {
 }
 .relay-dialog form {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
 }
 .relay-dialog label {
@@ -2780,6 +2780,8 @@ main {
   margin: 0;
   min-width: 0;
 }
+.relay-dialog .relay-approval-note,
+.relay-dialog .relay-approval-note,
 .relay-dialog .relay-instructions,
 .relay-dialog .relay-check,
 .relay-dialog form > button {

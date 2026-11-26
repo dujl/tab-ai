@@ -20,6 +20,7 @@ import {
   approvalPolicyContext,
   selectedApprovalPolicy,
   supportsAutoApproval,
+  manualApprovalPolicy,
 } from './approval-policy.js';
 import { agentPlanSchema, agentPlansText, priorAgentPlan } from './agent-plans.js';
 import { setMaxListeners } from 'node:events';
@@ -214,6 +215,7 @@ export class Manager {
   private taskBridges = new Map<string, Promise<Awaited<ReturnType<typeof taskBridge>>>>();
   private publishingTaskEntries = new Set<string>();
   private topicDraftHandlers = new Map<string, (input: unknown) => unknown>();
+  private reportReadHandlers = new Map<string, (reportId: string) => unknown>();
   private closeNotices = new Map<string, string>();
   private relayQueueTimer?: ReturnType<typeof setInterval>;
   private relayQueueJobs = new Map<string, Promise<void>>();
@@ -1226,9 +1228,9 @@ export class Manager {
     const session = this.store.get(id);
     if (!session) throw Error('会话不存在');
     const clearAuto =
-      (session.agent === 'codex' || session.agent === 'traecli') &&
+      (session.agent === 'codex' || session.agent === 'traecli' || session.agent === 'agy') &&
       selectedApprovalPolicy(session) === 'auto-allow' &&
-      (revoke || mode === 'on-request');
+      (revoke || mode === manualApprovalPolicy(session.agent));
     if (
       !clearAuto &&
       (this.active.has(id) ||
@@ -1244,7 +1246,7 @@ export class Manager {
         delete session.approvalPolicy;
       else session.approvalPolicy = mode;
     }
-    if (clearAuto) session.approvalPolicy = 'on-request';
+    if (clearAuto) session.approvalPolicy = manualApprovalPolicy(session.agent);
     this.store.save(session);
     this.store.event(
       id,
@@ -2270,6 +2272,11 @@ export class Manager {
             return handler(input);
           },
           current,
+          (reportId) => {
+            const read = this.reportReadHandlers.get(session.id);
+            if (!read) throw Error('报告读取仅在当前执行轮内可用');
+            return read(reportId);
+          },
         );
         this.taskBridges.set(session.id, shared);
         void shared.catch(() => this.taskBridges.delete(session.id));
@@ -2299,6 +2306,55 @@ export class Manager {
         'agent_input',
         JSON.stringify({ ...inputSnapshot, status: 'prepared' }),
       );
+      let submittedInput = { ...inputSnapshot };
+      let accepted = false;
+      const acceptInput: NonNullable<import('./types.js').AgentHooks['inputAccepted']> = (
+        receipt,
+      ) => {
+        if (!isCurrentStage() || accepted) return;
+        accepted = true;
+        receipt = { ...receipt, nativeId: receipt.nativeId ?? session.nativeId };
+        const event = this.store.event(
+          session.id,
+          'agent_input',
+          JSON.stringify({
+            ...submittedInput,
+            nativeId: receipt.nativeId ?? session.nativeId,
+            status: 'submitted',
+            receipt,
+          }),
+        );
+        this.relay.submitted(session.id, run.stageId, run.runId, event.id, receipt);
+        this.controls.refresh(session.id);
+      };
+      this.reportReadHandlers.set(session.id, (reportId) => {
+        if (!isCurrentStage()) throw Error('报告读取不属于当前有效执行轮');
+        const report = this.reports.readForTask(session.id, reportId);
+        if (report.state !== 'ready' || !report.body) throw Error('报告尚未就绪，未返回全文');
+        const event = this.store.event(
+          session.id,
+          'task_report_read',
+          JSON.stringify({
+            reportId,
+            version: report.version,
+            runId: run.runId,
+            readerStageId: run.stageId,
+            readerNativeId: session.nativeId,
+            sourceSessionId: report.sessionId,
+            sourceStageId: report.sourceStageId,
+          }),
+        );
+        acceptInput({ nativeId: session.nativeId, evidence: 'task_report_read served' });
+        this.relay.reportRead(run.stageId, {
+          reportId,
+          version: report.version,
+          runId: run.runId,
+          eventId: event.id,
+          at: event.at,
+        });
+        this.controls.refresh(session.id);
+        return report;
+      });
       await this.agents[session.agent].run({
         session,
         text,
@@ -2308,13 +2364,14 @@ export class Manager {
         hooks: {
           input: (value) => {
             if (!isCurrentStage()) return;
-            const event = this.store.event(
+            submittedInput = { ...inputSnapshot, ...value };
+            this.store.event(
               session.id,
               'agent_input',
-              JSON.stringify({ ...inputSnapshot, ...value, status: 'submitted' }),
+              JSON.stringify({ ...submittedInput, status: 'sending' }),
             );
-            this.relay.submitted(session.id, session.currentStageId, run.runId, event.id);
           },
+          inputAccepted: acceptInput,
           nativeId: (id) => {
             if (!isCurrentStage()) return;
             this.store.atomic(() => {
@@ -2464,6 +2521,7 @@ export class Manager {
       clearTimeout(timer);
       this.relay.finish(session.id, session.currentStageId, run.runId);
       this.topicDraftHandlers.delete(session.id);
+      this.reportReadHandlers.delete(session.id);
       this.finishUsage(
         session.id,
         run.runId,
@@ -3118,7 +3176,7 @@ export class Manager {
       this.store.event(
         sessionId,
         'system',
-        '用户已开启本会话自动允许命令及文件审批；仅当前 Session，可用 /tab approval on-request 恢复人工审批。',
+        '用户已开启本会话自动允许命令及文件审批；仅当前 Session，可用 /tab approval clear 取消框架自动允许，后续按原生规则处理。',
       );
     }
     this.store.event(sessionId, 'decision', JSON.stringify({ id, answer }));
@@ -3198,7 +3256,8 @@ export class Manager {
       delete latest.pendingAttachments;
       delete latest.pendingAttachmentRequest;
       delete latest.pendingInitialTask;
-      if (latest.approvalPolicy === 'auto-allow') latest.approvalPolicy = 'on-request';
+      if (latest.approvalPolicy === 'auto-allow')
+        latest.approvalPolicy = manualApprovalPolicy(latest.agent);
       if (latest.status !== 'closed') latest.status = 'idle';
       this.store.save(latest);
       this.cancelAsyncQuestions(id);
@@ -3539,7 +3598,7 @@ export class Manager {
     this.tasks.pauseSession(id);
     this.closedSessions.add(id);
     if (session.approvalPolicy === 'auto-allow') {
-      session.approvalPolicy = 'on-request';
+      session.approvalPolicy = manualApprovalPolicy(session.agent);
       this.store.save(session);
     }
     session.status = 'closed';
@@ -4541,11 +4600,16 @@ export class Manager {
         const target = agentKindSchema.parse(args[1]);
         const continueTask = args[2] === 'continue';
         const settingsText = args.slice(continueTask ? 3 : 2).join(' ');
+        const options = settingsText ? JSON.parse(settingsText) : undefined;
         await this.relay.prepare(current.id, {
+          ...(options
+            ? 'approvalPolicy' in options || 'settings' in options || 'instructions' in options
+              ? options
+              : { settings: options }
+            : {}),
           agent: target,
           key: message.id,
           continueTask,
-          ...(settingsText ? { settings: JSON.parse(settingsText) } : {}),
         });
       } else if (operation === 'confirm') {
         await this.relay.confirm(current.id, args[1] ?? '', args[2] === 'accept-facts');
@@ -4601,11 +4665,17 @@ export class Manager {
         buttons: import('./types.js').ManagementButton[] = [];
       let text = `本任务执行阶段：${view.stages.map((s) => `${s.ordinal}. ${s.agent} · ${s.state} · ${s.id.slice(0, 8)}`).join('\n')}\n\n当前阶段：${active?.ordinal ?? '未登记'} · ${active?.agent ?? current.agent}\n接力输入：${active?.transition?.phase ?? '初始阶段'}\n每次接力使用新上下文，任务与逻辑会话保持不变。`;
       if (active?.transition?.error) text += `\n${active.transition.error}`;
+      if (active?.transition?.inputReceipt)
+        text += `\n交接输入受理依据：${active.transition.inputReceipt.evidence}。`;
+      else if (active?.transition?.phase === 'submitted')
+        text += '\n此历史提交记录没有原生受理回执，不能仅据状态确认收到。';
+      if (active?.transition?.reportRead)
+        text += `\n报告全文已由框架提供：v${active.transition.reportRead.version} · 运行 ${active.transition.reportRead.runId}；不代表模型已正确理解。`;
       for (const s of view.stages.filter((s) => s.transition?.queue.length))
         text += `\n接力队列 ${s.id}：${s.transition!.queue.length} 条。恢复未执行消息：/tab relay resume-queue ${s.id}；核对后重试未知消息：/tab relay retry-queue ${s.id}；清理：/tab relay dismiss-queue ${s.id}`;
       if (preparing) {
         const report = preparing.report;
-        text += `\n\n目标：${preparing.agent} · ${preparing.transition!.continueTask ? '接力并继续' : '接力后等待输入'}\n报告：${report?.state ?? '准备中'}${report ? ` · v${report.version}` : ''}\n${report?.body?.summary ?? ''}${report?.warning ? `\n资料限制：${report.warning}` : ''}${preparing.stale ? '\n预览已过期，请取消后重新准备。' : ''}`;
+        text += `\n\n目标：${preparing.agent} · ${preparing.transition!.continueTask ? '接力并继续' : '接力后等待输入'}\n目标审批：${preparing.approval.label}。${preparing.approval.description} 旧阶段授权不继承。\n报告：${report?.state ?? '准备中'}${report ? ` · v${report.version}` : ''}\n${report?.body?.summary ?? ''}${report?.warning ? `\n资料限制：${report.warning}` : ''}${preparing.stale ? '\n预览已过期，请取消后重新准备。' : ''}`;
         if (report?.state === 'ready' && !preparing.stale)
           buttons.push({
             label: report.quality === 'generated' ? '确认接力' : '接受事实版报告并接力',
@@ -4949,7 +5019,7 @@ export class Manager {
       const info = this.approvalPolicyInfo(current.id);
       return this.sendManagement(
         message,
-        `本会话审批策略：${info.modes.find((m) => m.id === info.mode)?.label ?? info.mode}${info.defaulted && (current.agent === 'codex' || current.agent === 'traecli') ? '（框架默认）' : ''}\n\n${info.modes.map((m) => `${m.label}（${m.id}）\n${m.description}`).join('\n\n')}\n\n审批卡片可选择本次、原生授权范围或本会话自动允许命令与文件审批。自动允许不含提问和登录授权，可用 /tab approval on-request 恢复人工审批。仅影响当前 Session，不修改共享原生配置或沙箱权限；关闭、重置或清除授权后取消自动允许。`,
+        `本会话审批策略：${info.modes.find((m) => m.id === info.mode)?.label ?? info.mode}${info.defaulted && (current.agent === 'codex' || current.agent === 'traecli') ? '（框架默认）' : ''}\n\n${info.modes.map((m) => `${m.label}（${m.id}）\n${m.description}`).join('\n\n')}\n\n审批卡片可选择本次、原生授权范围或本会话自动允许命令与文件审批。自动允许不含提问和登录授权，可用 /tab approval clear 取消框架自动允许，后续按当前原生规则处理。仅影响当前 Session，不修改共享原生配置或沙箱权限；关闭、重置或清除授权后取消自动允许。`,
         current.id,
         'approval',
         [

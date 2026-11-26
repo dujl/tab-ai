@@ -1,4 +1,5 @@
 import { agentKindSchema } from '../core/agent-kind.js';
+import { approvalModes, selectedApprovalPolicy } from '../core/approval-policy.js';
 import { executionRecords } from '../core/execution-records.js';
 import { usageBreakdown } from '../core/token-usage.js';
 import { agentPlans } from '../core/agent-plans.js';
@@ -401,7 +402,11 @@ export function createDashboard(manager: Manager, token: string, setup?: SetupSe
           const agent = agentKindSchema.parse(
             new URL(request.url!, 'http://localhost').searchParams.get('agent'),
           );
-          return json(response, 200, { models: await manager.relay.models(id, agent) });
+          return json(response, 200, {
+            models: await manager.relay.models(id, agent),
+            approvalModes: approvalModes(agent),
+            defaultApprovalPolicy: selectedApprovalPolicy({ agent }),
+          });
         }
         if (action === 'relay') {
           if (request.method === 'GET') return json(response, 200, manager.relay.view(id));

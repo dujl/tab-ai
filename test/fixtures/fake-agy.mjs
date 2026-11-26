@@ -89,12 +89,14 @@ function defaultConfigOptions() {
       name: 'Model',
       category: 'model',
       type: 'select',
-      currentValue: 'agy-model-a',
-      options: [
-        { value: 'agy-model-a', name: 'AGY Model A' },
-        { value: 'agy-model-b', name: 'AGY Model B' },
-        { value: 'agy-model-fixed', name: 'AGY Model Fixed' },
-      ],
+      currentValue: modeFlag('invalid-default-model') ? 'MODEL_PLACEHOLDER_TEST' : 'agy-model-a',
+      options: modeFlag('empty-model-catalogue')
+        ? []
+        : [
+            { value: 'agy-model-a', name: 'AGY Model A' },
+            { value: 'agy-model-b', name: 'AGY Model B' },
+            { value: 'agy-model-fixed', name: 'AGY Model Fixed' },
+          ],
     },
     {
       id: 'thought_level',
@@ -154,6 +156,20 @@ createInterface({ input: process.stdin }).on('line', async (line) => {
     return;
   }
 
+  if (
+    modeFlag('keychain-auth-failure') &&
+    ['session/new', 'session/resume'].includes(message.method)
+  ) {
+    const log = args[args.indexOf('--log-file') + 1];
+    appendFileSync(
+      log,
+      'W1126 14:38:20 composite_token_storage.go:614] Failed to load stored token from keyring, falling back to file: exit status 36\n' +
+        'I1126 14:38:20 boot.go:103] Silent sign-in failed; session requests fail with auth_required until the client signs in.\n',
+    );
+    send({ id: message.id, error: { code: -32000, message: 'Authentication required' } });
+    return;
+  }
+
   if (message.method === 'session/new') {
     activeSessionId = modeFlag('custom-session-id')
       ? readFileSync(join(process.cwd(), 'custom-session-id'), 'utf8').trim()
@@ -183,14 +199,16 @@ createInterface({ input: process.stdin }).on('line', async (line) => {
           sessionId: activeSessionId,
           models: {
             currentModelId: 'agy-model-a-medium',
-            availableModels: [
-              { modelId: 'agy-model-a-low', name: 'AGY Model A (Low)' },
-              { modelId: 'agy-model-a-medium', name: 'AGY Model A (Medium)' },
-              { modelId: 'agy-model-a-high', name: 'AGY Model A (High)' },
-              { modelId: 'agy-model-b-low', name: 'AGY Model B (Low)' },
-              { modelId: 'agy-model-b-high', name: 'AGY Model B (High)' },
-              { modelId: 'agy-model-fixed', name: 'AGY Model Fixed' },
-            ],
+            availableModels: modeFlag('empty-model-catalogue')
+              ? []
+              : [
+                  { modelId: 'agy-model-a-low', name: 'AGY Model A (Low)' },
+                  { modelId: 'agy-model-a-medium', name: 'AGY Model A (Medium)' },
+                  { modelId: 'agy-model-a-high', name: 'AGY Model A (High)' },
+                  { modelId: 'agy-model-b-low', name: 'AGY Model B (Low)' },
+                  { modelId: 'agy-model-b-high', name: 'AGY Model B (High)' },
+                  { modelId: 'agy-model-fixed', name: 'AGY Model Fixed' },
+                ],
           },
           configOptions: defaultConfigOptions(),
         },
@@ -295,6 +313,58 @@ createInterface({ input: process.stdin }).on('line', async (line) => {
   }
 
   if (message.method === 'session/prompt') {
+    if (modeFlag('prompt-error-as-success') || modeFlag('prompt-error-after-acceptance')) {
+      if (modeFlag('prompt-error-after-acceptance')) {
+        send({
+          method: 'session/update',
+          params: {
+            sessionId: activeSessionId,
+            update: {
+              sessionUpdate: 'agent_message_chunk',
+              content: { type: 'text', text: 'working...' },
+            },
+          },
+        });
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      const log = args[args.indexOf('--log-file') + 1];
+      appendFileSync(
+        log,
+        'E1126 14:01:37 errorreport.go:282] failed to construct executor: unknown model key MODEL_PLACEHOLDER_TEST: model not found\n',
+      );
+      send({
+        method: 'session/update',
+        params: {
+          sessionId: activeSessionId,
+          update: {
+            sessionUpdate: 'agent_message_chunk',
+            content: {
+              type: 'text',
+              text: '⚠ failed to construct executor: unknown model key MODEL_PLACEHOLDER_TEST: model not found',
+            },
+          },
+        },
+      });
+      if (modeFlag('prompt-error-as-success'))
+        send({ id: message.id, result: { stopReason: 'end_turn' } });
+      return;
+    }
+    if (modeFlag('prompt-log-failure')) {
+      const log = args[args.indexOf('--log-file') + 1];
+      appendFileSync(
+        log,
+        'E1126 13:07:00 errorreport.go:123] loadCodeAssistResponse failed: EOF https://example.test/?token=private-native-secret\nE1126 13:07:01 errorreport.go:123] failed to construct executor: unknown model key MODEL_PLACEHOLDER_TEST: model not found\n',
+      );
+      return;
+    }
+    if (modeFlag('prompt-stall')) return;
+    if (modeFlag('prompt-fail-before-events')) {
+      send({
+        id: message.id,
+        error: { code: -32000, message: 'prompt transport failed before acceptance' },
+      });
+      return;
+    }
     const promptId = message.id;
     const text = (message.params.prompt ?? [])
       .filter((b) => b.type === 'text')
@@ -318,6 +388,33 @@ createInterface({ input: process.stdin }).on('line', async (line) => {
 
     if (text === 'refusal') {
       send({ id: promptId, result: { stopReason: 'refusal' } });
+      return;
+    }
+    if (text === 'persistent-approval') {
+      const reply = await askClient('session/request_permission', {
+        sessionId: activeSessionId,
+        toolCall: {
+          toolCallId: 'persistent',
+          title: 'Run command',
+          kind: 'execute',
+          rawInput: { command: 'npm test' },
+        },
+        options: [
+          { optionId: 'allow_always', kind: 'allow_always' },
+          { optionId: 'reject_always', kind: 'reject_always' },
+        ],
+      });
+      send({
+        method: 'session/update',
+        params: {
+          sessionId: activeSessionId,
+          update: {
+            sessionUpdate: 'agent_message_chunk',
+            content: { type: 'text', text: reply.result?.outcome?.outcome },
+          },
+        },
+      });
+      send({ id: promptId, result: { stopReason: 'end_turn' } });
       return;
     }
 

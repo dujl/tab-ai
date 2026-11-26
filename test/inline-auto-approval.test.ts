@@ -225,3 +225,72 @@ test('a native Codex approval carries the server-issued automation capability an
     await f.cleanup();
   }
 });
+
+test('AGY auto-allow applies to this session command/file requests, excludes other permissions and revokes during the run', async () => {
+  const f = fixture();
+  try {
+    const s = f.store.create(incoming('').route, 'agy', f.dir);
+    const command = (detail: string) => ({
+      kind: 'approval' as const,
+      title: 'Execute',
+      detail,
+      approvalAutomation: 'agy-command-file' as const,
+      approvalOptions: approvalChoices(true, true),
+    });
+    const answers: Answer[] = [];
+    let resume!: () => void;
+    f.agent.handler = async (run) => {
+      const first = run.hooks.ask(command('query table one'), run.signal);
+      const second = run.hooks.ask(command('query table two'), run.signal);
+      answers.push(...(await Promise.all([first, second])));
+      answers.push(await run.hooks.ask(command('edit another file'), run.signal));
+      await new Promise<void>((resolve) => {
+        resume = resolve;
+      });
+      await run.hooks.ask(command('query table three'), run.signal);
+      await run.hooks.ask(
+        {
+          kind: 'approval',
+          title: 'External authorization',
+          detail: '',
+          approvalOptions: approvalChoices(),
+        },
+        run.signal,
+      );
+    };
+    f.manager.submit(s.id, 'work');
+    await until(() => f.manager.interactions().length === 2);
+    const first = f.manager.interactions()[0]!;
+    assert.ok(first.approvalOptions?.some((o) => o.id === 'auto'));
+    f.manager.answer(s.id, first.id, { allow: true, scope: 'auto' });
+    await until(() => !!resume);
+    assert.deepEqual(answers, [{ allow: true }, { allow: true }, { allow: true }]);
+    assert.equal(f.store.get(s.id)!.approvalPolicy, 'auto-allow');
+    const other = f.store.create(incoming('', 'alice', 'other').route, 'agy', f.dir);
+    assert.equal(other.approvalPolicy, undefined);
+    await f.manager.setApprovalPolicy(
+      s.id,
+      'auto-allow',
+      f.manager.approvalPolicyInfo(s.id).revision,
+      true,
+    );
+    assert.equal(f.store.get(s.id)!.approvalPolicy, 'default');
+    resume();
+    await until(() => f.manager.interactions().length === 1);
+    const next = f.manager.interactions()[0]!;
+    f.manager.answer(s.id, next.id, { allow: true });
+    await until(() => f.manager.interactions().some((q) => q.title === 'External authorization'));
+    const auth = f.manager.interactions()[0]!;
+    assert.ok(!auth.approvalOptions?.some((o) => o.id === 'auto'));
+    assert.throws(() => f.manager.answer(s.id, auth.id, { allow: true, scope: 'auto' }), /不支持/);
+    f.manager.answer(s.id, auth.id, { allow: false });
+    await f.manager.idle();
+    const decisions = f.store
+      .events(s.id)
+      .filter((e) => e.type === 'decision')
+      .map((e) => JSON.parse(e.text));
+    assert.equal(decisions.filter((x) => x.automatic).length, 2);
+  } finally {
+    await f.cleanup();
+  }
+});

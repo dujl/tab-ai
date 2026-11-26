@@ -102,7 +102,7 @@ test('Antigravity CLI tasks persist in Store and appear in agentCatalog', async 
     assert.equal(entry?.name, 'Antigravity CLI');
     assert.deepEqual(
       approvalModes('agy').map((m) => m.id),
-      ['native', 'default', 'accept-edits', 'auto', 'plan'],
+      ['native', 'default', 'accept-edits', 'auto', 'auto-allow', 'plan'],
     );
   } finally {
     await f.cleanup();
@@ -628,6 +628,276 @@ test('NativeTopicRouter classifies with agy --print --output-format json --json-
     } finally {
       await router.close();
     }
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test('AGY native auto and framework auto-allow use valid ACP modes and narrowly scoped approval choices', async () => {
+  const f = fixture();
+  try {
+    const executable = installFakeAgy(f.dir),
+      adapter = new AgyAdapter(executable);
+    const s = f.store.create({ ...incoming('').route, platform: 'local' }, 'agy', f.dir);
+    for (const policy of ['auto', 'auto-allow']) {
+      s.approvalPolicy = policy;
+      const accepted: any[] = [];
+      await adapter.run({
+        session: s,
+        text: 'need-approval',
+        signal: AbortSignal.timeout(5000),
+        hooks: {
+          nativeId(id) {
+            s.nativeId = id;
+          },
+          text() {},
+          activity() {},
+          inputAccepted(value) {
+            accepted.push(value);
+          },
+          async ask(request) {
+            assert.equal(request.approvalAutomation, 'agy-command-file');
+            assert.equal(
+              request.approvalOptions?.find((o) => o.id === 'session')?.label,
+              '允许本会话重复此操作',
+            );
+            assert.match(
+              request.approvalOptions!.find((o) => o.id === 'session')!.description!,
+              /完全一致|相同|均相同/,
+            );
+            return { allow: true };
+          },
+        },
+      });
+      assert.equal(accepted.length, 1);
+      assert.equal(accepted[0].nativeId, 'agy-native-1');
+    }
+    const trace = readFileSync(join(f.dir, 'acp-trace.jsonl'), 'utf8')
+      .trim()
+      .split('\n')
+      .map((x) => JSON.parse(x));
+    const modes = trace
+      .filter((x) => x.method === 'session/set_config_option' && x.params.configId === 'mode')
+      .map((x) => x.params.value);
+    assert.deepEqual(modes, ['auto', 'default']);
+    assert.ok(!trace.some((x) => x.params?.value === 'auto-allow'));
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test('AGY clears its first-acceptance deadline after a valid prompt event while the turn continues', async () => {
+  const f = fixture();
+  try {
+    const adapter = new AgyAdapter(installFakeAgy(f.dir), [], 60);
+    const session = f.store.create({ ...incoming('').route, platform: 'local' }, 'agy', f.dir);
+    const controller = new AbortController();
+    let accepted = 0,
+      timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await assert.rejects(
+        adapter.run({
+          session,
+          text: 'slow-cancel',
+          signal: AbortSignal.any([controller.signal, AbortSignal.timeout(5000)]),
+          hooks: {
+            nativeId(id) {
+              session.nativeId = id;
+            },
+            text() {},
+            activity() {},
+            inputAccepted() {
+              accepted++;
+              timer = setTimeout(() => controller.abort(), 150);
+            },
+            async ask() {
+              throw Error('unexpected approval');
+            },
+          },
+        }),
+        /任务已中断/,
+      );
+      assert.equal(accepted, 1);
+    } finally {
+      clearTimeout(timer);
+    }
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test('AGY does not disguise persistent native permissions as single-use or session-local grants', async () => {
+  const f = fixture();
+  try {
+    const adapter = new AgyAdapter(installFakeAgy(f.dir));
+    const session = f.store.create({ ...incoming('').route, platform: 'local' }, 'agy', f.dir);
+    const texts: string[] = [];
+    await adapter.run({
+      session,
+      text: 'persistent-approval',
+      signal: AbortSignal.timeout(5000),
+      hooks: {
+        nativeId(id) {
+          session.nativeId = id;
+        },
+        text(value) {
+          texts.push(value);
+        },
+        activity() {},
+        async ask(request) {
+          assert.deepEqual(
+            request.approvalOptions?.map((o) => o.id),
+            ['cancel'],
+          );
+          assert.equal(request.approvalAutomation, undefined);
+          assert.match(request.detail, /持久允许/);
+          return { allow: false, cancel: true };
+        },
+      },
+    });
+    assert.deepEqual(texts, ['cancelled']);
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test('AGY rejects missing model catalogues and invalid native defaults before sending a prompt', async () => {
+  for (const flag of ['empty-model-catalogue', 'invalid-default-model']) {
+    const f = fixture();
+    try {
+      writeFileSync(join(f.dir, flag), '1');
+      const adapter = new AgyAdapter(installFakeAgy(f.dir));
+      const session = f.store.create({ ...incoming('').route, platform: 'local' }, 'agy', f.dir);
+      let inputs = 0;
+      await assert.rejects(
+        adapter.run({
+          session,
+          text: 'continue',
+          signal: AbortSignal.timeout(5000),
+          hooks: {
+            nativeId(id) {
+              session.nativeId = id;
+            },
+            input() {
+              inputs++;
+            },
+            text() {},
+            activity() {},
+            async ask() {
+              throw Error('unexpected approval');
+            },
+          },
+        }),
+        /本轮未发送/,
+      );
+      assert.equal(inputs, 0);
+      assert.ok(!readTrace(f.dir).some((event) => event.method === 'session/prompt'));
+    } finally {
+      await f.cleanup();
+    }
+  }
+});
+
+test('AGY records a native executor failure even if ACP returns it as text with end_turn or stalls after acceptance', async () => {
+  for (const flag of ['prompt-error-as-success', 'prompt-error-after-acceptance']) {
+    const f = fixture();
+    try {
+      writeFileSync(join(f.dir, flag), '1');
+      const adapter = new AgyAdapter(installFakeAgy(f.dir));
+      const session = f.store.create({ ...incoming('').route, platform: 'local' }, 'agy', f.dir);
+      const texts: string[] = [];
+      await assert.rejects(
+        adapter.run({
+          session,
+          text: 'continue',
+          signal: AbortSignal.timeout(5000),
+          hooks: {
+            nativeId(id) {
+              session.nativeId = id;
+            },
+            text(value) {
+              texts.push(value);
+            },
+            activity() {},
+            async ask() {
+              throw Error('unexpected approval');
+            },
+          },
+        }),
+        /原生模型初始化失败/,
+      );
+      assert.ok(!texts.some((value) => value.includes('MODEL_PLACEHOLDER')));
+      assert.equal(readTrace(f.dir).filter((event) => event.method === 'session/prompt').length, 1);
+    } finally {
+      await f.cleanup();
+    }
+  }
+});
+
+test('AGY keeps model-error quotations in normal replies when no native failure occurred', async () => {
+  const f = fixture();
+  try {
+    const adapter = new AgyAdapter(installFakeAgy(f.dir));
+    const session = f.store.create({ ...incoming('').route, platform: 'local' }, 'agy', f.dir);
+    const texts: string[] = [];
+    await adapter.run({
+      session,
+      text: 'Explain failed to construct executor: model not found',
+      signal: AbortSignal.timeout(5000),
+      hooks: {
+        nativeId(id) {
+          session.nativeId = id;
+        },
+        text(value) {
+          texts.push(value);
+        },
+        activity() {},
+        async ask() {
+          throw Error('unexpected approval');
+        },
+      },
+    });
+    assert.ok(texts.join('').includes('failed to construct executor'));
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test('AGY explains keychain authentication failures and never sends or replays the user prompt', async () => {
+  const f = fixture();
+  try {
+    const adapter = new AgyAdapter(installFakeAgy(f.dir));
+    const session = f.store.create({ ...incoming('').route, platform: 'local' }, 'agy', f.dir);
+    session.nativeId = 'agy-saved-native';
+    writeFileSync(join(f.dir, 'keychain-auth-failure'), '1');
+    let accepted = 0;
+    await assert.rejects(
+      adapter.run({
+        session,
+        text: '继续',
+        signal: AbortSignal.timeout(5000),
+        hooks: {
+          nativeId() {},
+          text() {},
+          activity() {},
+          inputAccepted() {
+            accepted++;
+          },
+          async ask() {
+            throw Error('unexpected approval');
+          },
+        },
+      }),
+      /macOS 登录钥匙串.*静默登录失败/,
+    );
+    const trace = readTrace(f.dir);
+    assert.equal(accepted, 0);
+    assert.equal(session.nativeId, 'agy-saved-native');
+    assert.ok(
+      !trace.some((x) => ['session/prompt', 'session/new', 'authenticate'].includes(x.method)),
+    );
+    await assert.rejects(adapter.models(session, AbortSignal.timeout(5000)), /macOS 登录钥匙串/);
+    assert.ok(!readTrace(f.dir).some((x) => ['session/prompt', 'authenticate'].includes(x.method)));
   } finally {
     await f.cleanup();
   }

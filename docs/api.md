@@ -142,3 +142,5 @@ API 与 Dashboard 使用同一服务，默认 `http://127.0.0.1:4317`。请求�
 确认请求：`{"action":"confirm","stageId":"目标阶段UUID","acceptFacts":false}`。报告 ready 且快照有效才激活；事实版必须明确 acceptFacts。原生上下文延迟至首次业务轮次建立；重复确认已激活阶段不重复执行。
 
 同一入口还支持 cancel、retry-input、acknowledge-input、resume-queue、retry-queue、dismiss-queue，均需 stageId。未知输入不自动重放；retry-input 和 retry-queue 是用户核对后的明确重试。流程见 [Agent 接力](agent-relay.md)。
+
+Agent 接力的 prepare 请求还可携带目标 Agent 支持的 `approvalPolicy`；未指定时使用目标默认策略，不继承来源授权。`GET /api/sessions/:id/relay-models?agent=...` 同时返回 `approvalModes` 和 `defaultApprovalPolicy`，供预览选择。relay 响应中的阶段包含轻量的 `inputReceipt` / `reportRead`（均在 transition 下），对话 transcript 返回服务端 `task_report_read` 事件。输入快照的 sending 不代表原生受理；submitted 带 receipt 时才有本版本的受理依据，历史无回执记录不据此推断成功。

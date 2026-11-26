@@ -336,6 +336,18 @@ function renderEvents(events) {
         return group;
       }
       if (event.type === 'activity') return node('div', 'activity', `↳ ${event.text}`);
+      if (event.type === 'task_report_read') {
+        try {
+          const r = JSON.parse(event.text);
+          return node(
+            'div',
+            'activity',
+            `报告全文已由框架提供 · ${r.reportId} · v${r.version} · 运行 ${r.runId}`,
+          );
+        } catch {
+          return node('div', 'activity', '报告读取记录无法解析');
+        }
+      }
       if (event.type === 'agent_input') {
         const input = event.input,
           message = node('article', 'message user');
@@ -354,7 +366,7 @@ function renderEvents(events) {
           node(
             'summary',
             '',
-            `${input.status === 'submitted' ? '已向原生 Agent 提交' : '输入已准备，尚未确认提交原生接口'} · 查看完整输入与附加背景`,
+            `${input.status === 'submitted' && input.receipt ? '原生 Agent 已受理' : input.status === 'submitted' ? '已记录提交，历史记录没有受理回执' : input.status === 'sending' ? '正在发送，尚未确认原生受理' : '输入已准备，尚未发送'} · 查看完整输入与附加背景`,
           ),
           node(
             'p',

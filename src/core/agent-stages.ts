@@ -9,6 +9,7 @@ export interface AgentStage {
   agent: AgentKind;
   nativeId?: string;
   settings?: AgentSettings;
+  approvalPolicy?: string;
   workspace: string;
   state: 'preparing' | 'active' | 'ended' | 'failed' | 'cancelled';
   reason: 'initial' | 'relay' | 'reset' | 'reopen';
@@ -38,6 +39,15 @@ export interface AgentStage {
     error?: string;
     inputEventId?: number;
     inputRunId?: string;
+    inputReceipt?: {
+      at: number;
+      eventId: number;
+      runId: string;
+      nativeId?: string;
+      nativeTurnId?: string;
+      evidence: string;
+    };
+    reportRead?: { reportId: string; version: number; runId: string; eventId: number; at: number };
     queueResumeConfirmed?: boolean;
     queue: { id: string; message: Incoming; state: 'pending' | 'processing' | 'unconfirmed' }[];
   };
