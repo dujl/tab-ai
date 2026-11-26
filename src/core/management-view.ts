@@ -34,6 +34,7 @@ const titles: Record<string, string> = {
   bots: '机器人与权限',
   workspace: '工作目录',
   settings: '模型与思考',
+  relay: 'Agent 接力与执行阶段',
   instructions: '会话附加指令',
   files: '会话附件',
   history: '最近对话',
@@ -163,9 +164,9 @@ export const managementMenuPages: Record<string, ManagementButton[]> = {
     { label: '持续任务与终端', command: '/tab menu maintenance' },
   ],
   maintenance: [
+    { label: 'Agent 接力与阶段', command: '/tab relay' },
     { label: '持续任务管理', command: '/tab loops' },
     { label: '原生终端交接', command: '/tab menu terminal' },
-    { label: '常用设置', command: '/tab menu controls' },
     { label: '会话状态', command: '/tab status' },
   ],
   research: [

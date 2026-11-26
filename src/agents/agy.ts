@@ -1,7 +1,11 @@
 import { z } from 'zod';
 import { TASK_MCP_SERVER } from '../brand.js';
 import { approvalAction, approvalChoices } from '../core/approval-decisions.js';
-import { approvalPolicyContext, selectedApprovalPolicy } from '../core/approval-policy.js';
+import {
+  approvalPolicyContext,
+  selectedApprovalPolicy,
+  nativeApprovalPolicy,
+} from '../core/approval-policy.js';
 import { agentPlanSchema } from '../core/agent-plans.js';
 import { agentInstructions } from '../core/channel-instructions.js';
 import { type AgentAdapter, type AgentModel, type AgentRun, type Session } from '../core/types.js';
@@ -11,6 +15,7 @@ import { RpcProcess, type RpcMessage } from './rpc.js';
 import { ScopedGrants } from './scoped-grants.js';
 import { agyContextUsage, agyUsage } from './token-usage.js';
 import { acpTool } from './tool-events.js';
+import { AgyDiagnostics, agyFailure } from './agy-diagnostics.js';
 
 const selectOptionValue = z
   .object({
@@ -261,6 +266,29 @@ function contentText(content: unknown): string {
   return '';
 }
 
+function requireAvailableModel(
+  loaded: z.infer<typeof sessionResponseSchema>,
+  options: ConfigOption[] | undefined,
+  selected?: string,
+) {
+  const modelOption = findConfigOption(options, ['model'], ['model']);
+  // Older ACP versions may omit model discovery entirely. If discovery is
+  // advertised, an empty catalogue is not evidence of a usable native default.
+  if (modelOption?.options === undefined && loaded.models?.availableModels === undefined) return;
+  const catalogue = extractModels({ ...loaded, configOptions: options });
+  if (!catalogue.length || loaded.models?.availableModels?.length === 0)
+    throw new Error('Antigravity CLI 未加载可用模型目录；本轮未发送。请刷新模型列表后重试。');
+  const current =
+    selected ??
+    (typeof modelOption?.currentValue === 'string'
+      ? modelOption.currentValue
+      : loaded.models?.currentModelId);
+  if (current && !catalogue.some((model) => model.id === current))
+    throw new Error(
+      'Antigravity CLI 当前模型不在可用模型目录中；本轮未发送。请在本会话模型设置中重新选择模型。',
+    );
+}
+
 function isTaskBridgeTool(toolCall: z.infer<typeof permissionRequestSchema>['toolCall']): boolean {
   if (!toolCall) return false;
   const metaName =
@@ -343,6 +371,7 @@ export class AgyAdapter implements AgentAdapter {
   constructor(
     private command = 'agy',
     private secretKeys: string[] = [],
+    private inputAcceptanceTimeoutMs = 90_000,
   ) {}
   async release(id: string) {
     this.grants.clear(id);
@@ -362,10 +391,16 @@ export class AgyAdapter implements AgentAdapter {
         : []),
     ];
   }
-  private startRpc(cwd: string): RpcProcess {
-    return new RpcProcess(this.command, ['acp'], cwd, agentEnvironment(this.secretKeys), {
-      jsonrpc: '2.0',
-    });
+  private startRpc(cwd: string) {
+    const diagnostics = new AgyDiagnostics();
+    const rpc = new RpcProcess(
+      this.command,
+      ['acp', '--log-file', diagnostics.file],
+      cwd,
+      agentEnvironment(this.secretKeys),
+      { jsonrpc: '2.0' },
+    );
+    return { rpc, diagnostics };
   }
   private async initialize(rpc: RpcProcess, clientName: string) {
     const raw = await rpc.request('initialize', {
@@ -385,7 +420,7 @@ export class AgyAdapter implements AgentAdapter {
   }
   async models(session: Session, signal: AbortSignal): Promise<AgentModel[]> {
     signal.throwIfAborted();
-    const rpc = this.startRpc(session.workspace);
+    const { rpc, diagnostics } = this.startRpc(session.workspace);
     const abort = () => {
       void rpc.close();
     };
@@ -402,20 +437,29 @@ export class AgyAdapter implements AgentAdapter {
       createdSessionId = created.sessionId;
       signal.throwIfAborted();
       const catalog = extractModels(created);
-      if (!catalog.length) throw new Error('Antigravity CLI 未返回可用模型列表。');
+      if (!catalog.length)
+        throw new Error(diagnostics.failure()?.message ?? 'Antigravity CLI 未返回可用模型列表。');
       return catalog;
+    } catch (error) {
+      const diagnostic = diagnostics.failure();
+      const failure = diagnostic?.terminal
+        ? diagnostic
+        : (agyFailure(error instanceof Error ? error.message : '') ?? diagnostic);
+      if (failure) throw new Error(failure.message);
+      throw error;
     } finally {
       signal.removeEventListener('abort', abort);
       if (supportsClose && createdSessionId && !signal.aborted)
         await rpc.request('session/close', { sessionId: createdSessionId }, 2000).catch(() => {});
       await rpc.close();
+      diagnostics.close();
     }
   }
   async run({ session, text, hooks, signal, taskBridge }: AgentRun): Promise<void> {
     signal.throwIfAborted();
     const controller = new AbortController();
     const combined = AbortSignal.any([signal, controller.signal]);
-    const rpc = this.startRpc(session.workspace);
+    const { rpc, diagnostics } = this.startRpc(session.workspace);
     const jobs = new Set<Promise<void>>();
     const tools = new Map<string, { name: string; input?: string }>();
     let activeSessionId: string | undefined;
@@ -433,6 +477,15 @@ export class AgyAdapter implements AgentAdapter {
     };
 
     const approvalContext = approvalPolicyContext('agy', selectedApprovalPolicy(session));
+    let inputAccepted = false;
+    let acceptanceTimer: ReturnType<typeof setTimeout> | undefined;
+    let diagnosticTimer: ReturnType<typeof setInterval> | undefined;
+    const acceptInput = (evidence: string) => {
+      if (inputAccepted || !acceptingUpdates || !activeSessionId) return;
+      inputAccepted = true;
+      clearTimeout(acceptanceTimer);
+      hooks.inputAccepted?.({ nativeId: activeSessionId, evidence });
+    };
 
     const handlePermission = async (message: RpcMessage) => {
       const parsed = permissionRequestSchema.safeParse(message.params);
@@ -447,13 +500,13 @@ export class AgyAdapter implements AgentAdapter {
         return;
       }
       flushText();
+      acceptInput('ACP permission request');
       const { toolCall, options } = parsed.data;
       const allowOnce = options.find((o) => o.kind === 'allow_once');
-      const allowAlways = options.find((o) => o.kind === 'allow_always');
-      const allowOption = allowOnce ?? allowAlways;
-      const rejectOption =
-        options.find((o) => o.kind === 'reject_once') ??
-        options.find((o) => o.kind === 'reject_always');
+      // Persistent native decisions may outlive this logical Session. Never
+      // present them as one-time or session-local permission.
+      const allowOption = allowOnce;
+      const rejectOption = options.find((o) => o.kind === 'reject_once');
 
       if (taskBridge && allowOption && isTaskBridgeTool(toolCall)) {
         rpc.write({
@@ -480,11 +533,22 @@ export class AgyAdapter implements AgentAdapter {
         return;
       }
 
-      const choices = approvalChoices(!!allowOption, true).filter((choice) => {
-        if (choice.id === 'allow' || choice.id === 'session') return !!allowOption;
-        if (choice.id === 'deny') return !!rejectOption;
-        return choice.id === 'cancel';
-      });
+      const choices = approvalChoices(!!allowOption, true)
+        .filter((choice) => {
+          if (choice.id === 'allow' || choice.id === 'session') return !!allowOption;
+          if (choice.id === 'deny') return !!rejectOption;
+          return choice.id === 'cancel';
+        })
+        .map((choice) =>
+          choice.id === 'session'
+            ? {
+                ...choice,
+                label: '允许本会话重复此操作',
+                description:
+                  '仅复用工具类型、标题、完整参数和文件位置均相同的请求；命令或脚本变化仍需确认。不跨会话，关闭、重启或清除授权后失效。',
+              }
+            : choice,
+        );
       const payload = permissionPayload(toolCall);
       const toolLabel = toolCall?.title || toolCall?.kind || '工具操作';
       const presentation = approvalPresentation(
@@ -494,6 +558,9 @@ export class AgyAdapter implements AgentAdapter {
         toolCall?.kind === 'execute',
         toolLabel,
       );
+      if (!allowOnce && options.some((o) => o.kind === 'allow_always'))
+        presentation.detail +=
+          '\n原生仅提供持久允许，不能作为本次或本会话授权；可取消后在原生终端检查权限。';
       let answer;
       try {
         answer = await hooks.ask(
@@ -503,6 +570,9 @@ export class AgyAdapter implements AgentAdapter {
             ...presentation,
             approvalOptions: choices,
             approvalContext,
+            ...(allowOnce && ['execute', 'edit'].includes(toolCall?.kind ?? '')
+              ? { approvalAutomation: 'agy-command-file' as const }
+              : {}),
           },
           combined,
         );
@@ -544,6 +614,12 @@ export class AgyAdapter implements AgentAdapter {
       if (!params || params.sessionId !== activeSessionId || !params.update) return;
       const update = params.update;
       const kind = update.sessionUpdate;
+      if (
+        ['agent_message_chunk', 'agent_thought_chunk', 'tool_call', 'tool_call_update'].includes(
+          String(kind),
+        )
+      )
+        acceptInput('ACP prompt event');
       if (kind === 'agent_message_chunk') {
         const piece = contentText(update.content);
         if (piece) pendingText += piece;
@@ -691,21 +767,23 @@ export class AgyAdapter implements AgentAdapter {
       combined.throwIfAborted();
 
       let currentConfigOptions = loaded.configOptions;
-      if (session.approvalPolicy && session.approvalPolicy !== 'native') {
+      requireAvailableModel(loaded, currentConfigOptions, session.settings?.model);
+      const policy = nativeApprovalPolicy(session);
+      if (policy) {
         const modeOption = findConfigOption(currentConfigOptions, ['mode'], ['mode']);
         if (modeOption) {
           const updated = setConfigOptionResponse.parse(
             await rpc.request('session/set_config_option', {
               sessionId: activeSessionId,
               configId: modeOption.id,
-              value: session.approvalPolicy,
+              value: policy,
             }),
           );
           if (updated.configOptions) currentConfigOptions = updated.configOptions;
         } else {
           await rpc.request('session/set_mode', {
             sessionId: activeSessionId,
-            modeId: session.approvalPolicy,
+            modeId: policy,
           });
         }
       }
@@ -747,6 +825,7 @@ export class AgyAdapter implements AgentAdapter {
       }
 
       combined.throwIfAborted();
+      requireAvailableModel(loaded, currentConfigOptions, session.settings?.model);
       hooks.input?.({
         text,
         nativeId: activeSessionId,
@@ -754,7 +833,21 @@ export class AgyAdapter implements AgentAdapter {
         instructionMode: 'agy-append',
       });
 
+      diagnostics.beginPrompt();
       acceptingUpdates = true;
+      diagnosticTimer = setInterval(() => {
+        const failure = diagnostics.failure();
+        if (failure?.terminal)
+          controller.abort(new Error(failure.message + '本轮执行失败，未自动重试。'));
+      }, 250);
+      acceptanceTimer = setTimeout(() => {
+        const failure = diagnostics.failure();
+        controller.abort(
+          new Error(
+            `${failure?.message ?? `Antigravity CLI 在 ${Math.round(this.inputAcceptanceTimeoutMs / 1000)} 秒内未确认处理本轮输入；原生未返回明确原因，请检查模型、登录和网络。`}输入结果未确认，不自动重试。`,
+          ),
+        );
+      }, this.inputAcceptanceTimeoutMs);
       const result = promptResponseSchema.parse(
         await rpc.request(
           'session/prompt',
@@ -765,6 +858,11 @@ export class AgyAdapter implements AgentAdapter {
           0,
         ),
       );
+      // Some ACP versions send a warning as agent text and still return
+      // end_turn. Native executor failures must not become successful runs.
+      const nativeFailure = diagnostics.failure();
+      if (nativeFailure?.terminal) throw new Error(nativeFailure.message);
+      acceptInput('ACP prompt response');
       acceptingUpdates = false;
       combined.throwIfAborted();
       flushText();
@@ -789,8 +887,15 @@ export class AgyAdapter implements AgentAdapter {
     } catch (error) {
       if (controller.signal.aborted && !signal.aborted) throw controller.signal.reason;
       if (signal.aborted) throw new Error('任务已中断');
+      const diagnostic = diagnostics.failure();
+      const failure = diagnostic?.terminal
+        ? diagnostic
+        : (agyFailure(error instanceof Error ? error.message : '') ?? diagnostic);
+      if (failure) throw new Error(failure.message);
       throw error;
     } finally {
+      clearTimeout(acceptanceTimer);
+      clearInterval(diagnosticTimer);
       acceptingUpdates = false;
       combined.removeEventListener('abort', abort);
       if (!completed && !controller.signal.aborted) controller.abort(new Error('本轮已结束'));
@@ -798,6 +903,7 @@ export class AgyAdapter implements AgentAdapter {
       if (supportsClose && activeSessionId && completed && !signal.aborted)
         await rpc.request('session/close', { sessionId: activeSessionId }, 2000).catch(() => {});
       await rpc.close();
+      diagnostics.close();
     }
   }
 }

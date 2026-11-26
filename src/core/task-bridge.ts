@@ -12,6 +12,7 @@ export async function taskBridge(
   ensure?: () => void,
   topicReport?: (input: unknown) => unknown,
   authorize?: () => void,
+  readReport?: (reportId: string) => unknown,
 ) {
   return capabilityBridge(
     'tab-ai-tasks',
@@ -40,7 +41,10 @@ export async function taskBridge(
           description: '读取本任务、下级或已声明依赖的版本化交付报告，包括规格、验证和经验。',
           inputSchema: { reportId: z.string().uuid() },
         },
-        (input) => call(() => tasks.readReport(sessionId, input.reportId)),
+        (input) =>
+          call(() =>
+            readReport ? readReport(input.reportId) : tasks.readReport(sessionId, input.reportId),
+          ),
       );
       mcp.registerTool(
         'task_experience',

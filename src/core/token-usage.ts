@@ -194,7 +194,10 @@ function currentSessionUsage(session: Session) {
     round,
   };
 }
-export function archiveSessionUsage(session: Session): ArchivedUsageSummary {
+export function archiveSessionUsage(
+  session: Session,
+  reason: 'reset' | 'relay' = 'reset',
+): ArchivedUsageSummary {
   const prev = session.archivedTokenUsage;
   const current = currentSessionUsage(session);
   const currentNorm = current.total
@@ -214,7 +217,10 @@ export function archiveSessionUsage(session: Session): ArchivedUsageSummary {
   );
   const since = sinceCandidates.length ? Math.min(...sinceCandidates) : undefined;
   return {
-    resets: (prev?.resets ?? 0) + 1,
+    resets: (prev?.resets ?? 0) + (reason === 'reset' ? 1 : 0),
+    ...(reason === 'relay' || prev?.relays
+      ? { relays: (prev?.relays ?? 0) + (reason === 'relay' ? 1 : 0) }
+      : {}),
     compactions: (prev?.compactions ?? 0) + current.compactions,
     recordedContexts: (prev?.recordedContexts ?? 0) + (currentNorm ? 1 : 0),
     partial: (prev?.partial ?? false) || currentPartial || hadUnreportedContext,
@@ -231,6 +237,7 @@ export interface SubtreeChildUsage {
   agent: AgentKind;
   depth: number;
   resets: number;
+  relays?: number;
   compactions: number;
   partial: boolean;
   task: UsageBreakdownView;
@@ -258,6 +265,7 @@ function taskOwnState(session: Session | undefined) {
   if (!session) {
     return {
       resets: 0,
+      relays: 0,
       compactions: 0,
       partial: false,
       hasSessionHistory: false,
@@ -269,15 +277,16 @@ function taskOwnState(session: Session | undefined) {
   const current = currentSessionUsage(session);
   const sessionNorm = current.total ? normalizeBreakdown(current.total, session.agent) : undefined;
   const resets = archived?.resets ?? 0;
+  const relays = archived?.relays ?? 0;
   const compactions = (archived?.compactions ?? 0) + current.compactions;
   const taskNorm = combineNormalized([archived?.aggregate, sessionNorm]);
   const partial =
     (archived?.partial ?? false) ||
     current.partial ||
-    (resets > 0 && !!session.nativeId && !sessionNorm);
+    ((resets > 0 || relays > 0) && !!session.nativeId && !sessionNorm);
   const hasSessionHistory =
     !!session.nativeId || resets > 0 || !!sessionNorm || !!archived?.aggregate;
-  return { resets, compactions, partial, hasSessionHistory, sessionNorm, taskNorm };
+  return { resets, relays, compactions, partial, hasSessionHistory, sessionNorm, taskNorm };
 }
 export function computeSubtreeUsageMap(
   entries: SubtreeCatalogNode[],
@@ -361,6 +370,7 @@ export function computeSubtreeUsageMap(
               agent: node.agent,
               depth,
               resets: cOwn.resets,
+              ...(cOwn.relays ? { relays: cOwn.relays } : {}),
               compactions: cOwn.compactions,
               partial: cOwn.partial,
               task: formatNormalized(cOwn.taskNorm),
@@ -434,6 +444,10 @@ export function usageInformation(session: Session, subtree?: SubtreeUsageInfo) {
   };
   const archived = session.archivedTokenUsage;
   const resets = archived?.resets ?? 0;
+  const relays = archived?.relays ?? 0;
+  const changes = [resets ? `${resets} 次重置` : '', relays ? `${relays} 次接力` : '']
+    .filter(Boolean)
+    .join(' · ');
   const compactions = (archived?.compactions ?? 0) + currentCompactions;
   const currentSessionNorm = total ? normalizeBreakdown(total, session.agent) : undefined;
   const taskNormalized = combineNormalized([archived?.aggregate, currentSessionNorm]);
@@ -442,10 +456,11 @@ export function usageInformation(session: Session, subtree?: SubtreeUsageInfo) {
   const taskPartial =
     (archived?.partial ?? false) ||
     cumulative.partial ||
-    (resets > 0 && !!session.nativeId && !currentSessionNorm);
+    ((resets > 0 || relays > 0) && !!session.nativeId && !currentSessionNorm);
   const taskCumulative = {
     ...taskBreakdown,
     resets,
+    relays,
     compactions,
     archivedTotal: archivedBreakdown.total,
     archivedShort: archivedBreakdown.short.total,
@@ -453,8 +468,8 @@ export function usageInformation(session: Session, subtree?: SubtreeUsageInfo) {
     partial: taskPartial,
     at: cumulative.at ?? archived?.lastResetAt,
     scope:
-      resets > 0
-        ? `本任务累计（含 ${resets} 次重置${compactions > 0 ? ` · ${compactions} 次压缩` : ''}${taskPartial ? ' · 部分统计' : ''}）`
+      resets > 0 || relays > 0
+        ? `本任务累计（含 ${changes}${compactions > 0 ? ` · ${compactions} 次压缩` : ''}${taskPartial ? ' · 部分统计' : ''}）`
         : compactions > 0
           ? `${cumulative.scope}（已压缩 ${compactions} 次）`
           : cumulative.scope,
@@ -519,6 +534,7 @@ export function usageInformation(session: Session, subtree?: SubtreeUsageInfo) {
     roundShort,
     currentNativeId: session.nativeId,
     resets,
+    relays,
     compactions,
     cumulative,
     taskCumulative,
@@ -533,21 +549,21 @@ export function usageInformation(session: Session, subtree?: SubtreeUsageInfo) {
         ? [{ label: '用量来源', value: '原生会话历史（只读）' }]
         : []),
       { label: '累计输入与输出', value: detail(cumulative) },
-      ...(resets > 0
+      ...(resets > 0 || relays > 0
         ? [
             {
-              label: '本任务累计（含重置）',
+              label: '本任务累计（含上下文变更）',
               value:
                 `${taskCumulative.total} tokens（${detail(taskCumulative)}）` +
-                (archivedBreakdown.hasValue ? `；其中历史已重置 ${archivedBreakdown.total}` : ''),
+                (archivedBreakdown.hasValue ? `；其中历史已归档 ${archivedBreakdown.total}` : ''),
             },
           ]
         : []),
-      ...(resets > 0 || compactions > 0
+      ...(resets > 0 || relays > 0 || compactions > 0
         ? [
             {
               label: '上下文重置与压缩',
-              value: `已重置 ${resets} 次 · 已压缩 ${compactions} 次（压缩不减少会话累计；重置后新会话从零计起，历史消耗保留在本任务累计）`,
+              value: `已重置 ${resets} 次 · 已接力 ${relays} 次 · 已压缩 ${compactions} 次（压缩不减少会话累计；重置后新会话从零计起，历史消耗保留在本任务累计）`,
             },
           ]
         : []),

@@ -101,6 +101,7 @@ tab-ai serve
 | `/tab new` / `/tab task 总目标`            | 创建独立节点 / 创建自动编排主任务 |
 | `/tab tasks` / `/tab topics`               | 当前任务分支或关联话题总览        |
 | `/tab settings` / `/tab workspace 目录`    | 修改本节点模型或目录              |
+| `/tab relay`                               | 同一任务的 Agent 接力与执行阶段   |
 | `/tab reset` / `/tab compact`              | 重置上下文 / 查看原生压缩面板     |
 | `/tab stop` / `/tab close` / `/tab open`   | 停止当前轮 / 关闭 / 恢复          |
 | `/tab approval` / `/tab pending`           | 审批策略与待处理请求              |
@@ -148,3 +149,7 @@ verify 一次运行格式、文档、类型、完整测试和构建。`npm test`
 | 开发、测试与安全           | [贡献](CONTRIBUTING.md)、[测试](docs/testing.md)、[安全](SECURITY.md)                                    |
 
 项目：[tab-ai ↗](https://github.com/dujl/tab-ai) · [Apache-2.0 许可证](LICENSE)。公开问题请附版本、步骤和脱敏错误；敏感漏洞按安全说明私下报告。
+
+### Agent 接力
+
+同一任务可在 Codex、Claude Code、OpenCode 等已接入 Agent 之间接力，保持任务、Session 与聊天入口。每次建立新的原生上下文，以统一任务报告传递成果、规格、经验与未完成工作。网页任务页选择“执行阶段”，或在聊天中使用 `/tab relay`。报告就绪并确认后才执行下一阶段；详见 [Agent 接力指南](docs/agent-relay.md)。

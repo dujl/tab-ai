@@ -6,6 +6,7 @@
 
 | 表                      | 职责                                                                          |
 | ----------------------- | ----------------------------------------------------------------------------- |
+| `agent_stages`          | 每个 Session 的执行阶段、原生绑定、接力状态与持久消息队列                     |
 | `sessions`              | Session ID、nativeId、目录、Agent、状态、设置与关系，主体为 JSON              |
 | `bindings`              | Route → 当前 Session；归档节点不因路由相同覆盖当前选择                        |
 | `events`                | 递增 ID、Session、类型、正文、毫秒时间；公开输入/输出、工具、审批、报告索引等 |
@@ -20,7 +21,7 @@
 | `session_reports`       | 会话版本报告、Task revision、触发来源、状态、授权 scope 与正文                |
 | `schema_migrations`     | 已应用的数据登记版本与备份信息                                                |
 
-表名和建表细节以 `core/store.ts`、`core/report-store.ts`、`core/task-migration.ts` 为准。JSON 主体便于适配不同原生协议；查询所需身份、父级、状态和时间使用列或表达式索引，不把所有字段拆成独立关系表。
+表名和建表细节以 `core/store.ts`、`core/agent-stages.ts`、`core/report-store.ts`、`core/task-migration.ts` 为准。JSON 主体便于适配不同原生协议；查询所需身份、父级、状态和时间使用列或表达式索引，不把所有字段拆成独立关系表。
 
 ## 关系与状态
 
@@ -53,3 +54,9 @@ Session 写入及对应任务同步、任务结果/队列变化使用同一 SQLi
 `events.type=compaction` 可附本次操作 tokens.nativeId/before/after；`sessions.data.lastCompactionTokens` 保存最近已确认压缩的对比，`contextUsageInvalidated` 标识压缩后或中止后旧占用已失效。读取时校验当前 Agent/nativeId；重置任务上下文前会将当前原生上下文已确认累计归档至 `sessions.data.archivedTokenUsage`（记录重置次数、压缩次数与归档消耗），再清空当前原生快照与 `tokenLedger`，使“当前会话”从新上下文重新计起而“本任务累计”保留跨重置总消耗。统计使用 JSON 字段保存；没有可靠原生 ID 的 usage 事件不能作为当前样本；Codex 和 TRAE CLI 可按当前 Agent/nativeId 只读补查各自原生历史，作为展示覆盖层，不回填会话或改变更新时间，确实缺失时才等待新上报。各自目录及读取边界见 [原生历史统计读取](management-cards.md#原生历史统计读取)。
 
 `usage_runs` 按 `(session_id, run_id)` 保存逐轮/压缩用量、轮初基线、状态、来源和完整性；`usage_samples` 按 `(session_id, run_id, sample_id)` 覆盖消息采样，重复事件不会重复累计。`sessions.data.tokenLedger` 保存会话摘要、原生累计及分段信息、已采集计数和当前轮次。采样、轮次摘要、会话摘要及 usage 事件在同一事务内写入。重启把未完成用量轮次标记为中断和部分统计，不重放执行；读列表和用量接口不更新会话时间。上下文、最近调用和累计分别保留采样时间。
+
+## Agent 接力与统一报告
+
+Session 的 currentStageId 指向当前执行阶段，agent/nativeId 是当前投影。`agent_stages` 保存 Agent、nativeId、设置、来源阶段、输入报告及轻量接力状态，`request_key` 保证同一请求幂等；部分唯一索引限制每个 Session 最多一个 active 和 preparing 阶段。阶段激活、旧阶段结束、Session 和 Task 当前 Agent 的更新在同一 SQLite 事务中完成。没有独立 handoff 表，报告内容复用 `session_reports`，用途写入报告 JSON。
+
+首次登记已有会话前保存 0600 SQLite 备份；登记不更新会话时间、原生 ID 或绑定，也不给旧事件虚构阶段。events.stage_id 和用量轮次 stageId 关联新记录。提交未知和处理中的消息不在重启后自动重放。操作流程与恢复方式见 [Agent 接力](agent-relay.md)。

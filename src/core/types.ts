@@ -61,6 +61,8 @@ export interface LocalAttachment {
 }
 export interface Session {
   id: string;
+  currentStageId?: string;
+  executionRevision?: number;
   routeKey: string;
   route: Route;
   agent: AgentKind;
@@ -137,7 +139,7 @@ export interface Interaction {
   sessionId: string;
   kind: 'approval' | 'question';
   // Set only by the trusted adapter for native command/file approval callbacks.
-  approvalAutomation?: 'codex-command-file' | 'traecli-command-file';
+  approvalAutomation?: 'codex-command-file' | 'traecli-command-file' | 'agy-command-file';
   title: string;
   detail: string;
   approvalOptions?: {
@@ -180,6 +182,7 @@ export interface ToolRunView {
   total: number;
 }
 export interface AgentHooks {
+  // The input is about to be sent. This is not evidence of native acceptance.
   input?(value: {
     text: string;
     instructions?: string;
@@ -187,6 +190,7 @@ export interface AgentHooks {
     instructionMode?:
       'traecli-developer' | 'codex-developer' | 'claude-append' | 'opencode-system' | 'agy-append';
   }): void;
+  inputAccepted?(value: { nativeId?: string; nativeTurnId?: string; evidence: string }): void;
   nativeId(id: string): void;
   text(text: string): void;
   activity(text: string): void;

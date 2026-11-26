@@ -12,6 +12,7 @@ type Field = (typeof fields)[number];
 type Counters = Record<Field, { value: number; missing: number }>;
 export interface UsageRun {
   sessionId: string;
+  stageId?: string;
   runId: string;
   agent: AgentKind;
   nativeId?: string;
@@ -63,6 +64,7 @@ export interface NormalizedUsage {
 }
 export interface ArchivedUsageSummary {
   resets: number;
+  relays?: number;
   compactions: number;
   recordedContexts: number;
   partial: boolean;
@@ -152,6 +154,7 @@ export class UsageLedger {
     if (this.get(session.id, runId)) return;
     const summary = matchingLedger(session);
     const run: UsageRun = {
+      stageId: session.currentStageId,
       sessionId: session.id,
       runId,
       agent: session.agent,

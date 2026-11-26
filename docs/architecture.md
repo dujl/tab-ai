@@ -14,6 +14,9 @@ flowchart TD
   M --> T[Tasks: 树 / 队列 / 验收 / 依赖]
   M --> TOP[Topics: 交互话题关联与报告]
   M --> REP[SessionReports: 交付与经验队列]
+  M --> RELAY[AgentRelay: 预览 / 报告屏障 / 激活]
+  RELAY --> REP
+  RELAY --> STAGE[AgentStages: 当前执行阶段与历史]
   REP --> SUM[独立受限总结器]
   M --> AD[AgentAdapter]
   AD --> C[Codex app-server]
@@ -63,6 +66,8 @@ Route 的 platform/account/conversation/thread/sender 共同隔离。Binding 选
 | OpenCode        | 独立 loopback serve，随机认证，HTTP/SSE；按原生 ID 恢复            | 模型、压缩、待办、精确请求范围授权；每轮关闭服务               |
 
 同一 Session 同时只有一个工作/维护轮。原生历史与 app-server 进程是否持续存在是不同维度；默认逐轮恢复不会清空历史，也不保证或否定提供方的 prompt cache 命中。详见 [审批与上下文](session-approvals.md)。
+
+Task 与逻辑 Session 稳定，当前 Agent/nativeId 由执行阶段投影。更换 Agent 使用 [接力流程](agent-relay.md)：冻结报告、预览确认、原子激活新阶段；再次选择旧 Agent 仍新建原生上下文，读取截至上一阶段的版本报告。报告未就绪不会启动目标业务轮，激活期间输入持久排队，未知提交结果要求人工核对。
 
 新 Codex/TRAE CLI 线程注册动态任务工具；恢复的非动态线程与其他后端使用会话专属 loopback MCP，服务身份统一为 `tab_ai_tasks`。端点按 Session 存续，授权只在当前有效轮生效，不暴露 Dashboard token。工具及范围见 [任务编排](task-orchestration.md)。
 

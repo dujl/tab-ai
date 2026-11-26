@@ -561,6 +561,11 @@ export class AppServerAdapter implements AgentAdapter {
       );
       startingTurn = false;
       turnId = started.turn.id;
+      hooks.inputAccepted?.({
+        nativeId: result.thread.id,
+        nativeTurnId: turnId,
+        evidence: 'turn/start response',
+      });
       this.live.get(session.id)!.turnId = turnId;
       signal.throwIfAborted();
       for (const message of earlyMessages.splice(0)) rpc.onMessage(message);

@@ -1,4 +1,5 @@
 import { ReportStore } from './report-store.js';
+import { AgentStageStore } from './agent-stages.js';
 import { UsageLedger } from './usage-ledger.js';
 import type { TaskRecord, TaskJob } from './task-model.js';
 import { DatabaseSync } from 'node:sqlite';
@@ -30,6 +31,7 @@ import { readCompaction } from './maintenance-diagnostics.js';
 
 export interface StoredEvent {
   id: number;
+  stageId?: string;
   sessionId: string;
   type: string;
   text: string;
@@ -51,6 +53,7 @@ export class Store {
   private db: DatabaseSync;
   private receiptCleanup?: NodeJS.Timeout;
   readonly reports: ReportStore;
+  readonly stages: AgentStageStore;
   readonly usage: UsageLedger;
   private unifiedTasks = false;
   taskModelUnified(): boolean {
@@ -142,6 +145,34 @@ export class Store {
       CREATE INDEX IF NOT EXISTS events_session ON events(session_id, id);
       CREATE INDEX IF NOT EXISTS events_session_type ON events(session_id,type,id);
     `);
+    if (
+      !this.db.prepare("SELECT 1 FROM sqlite_master WHERE name='agent_stages'").get() &&
+      this.list().length
+    ) {
+      const backups = join(directory, 'backups');
+      mkdirSync(backups, { recursive: true, mode: 0o700 });
+      const file = join(backups, `before-agent-stages-${Date.now()}-${randomUUID()}.sqlite`);
+      this.db.prepare('VACUUM INTO ?').run(file);
+      chmodSync(file, 0o600);
+    }
+    if (
+      !this.db
+        .prepare('PRAGMA table_info(events)')
+        .all()
+        .some((r) => r.name === 'stage_id')
+    )
+      this.db.exec('ALTER TABLE events ADD COLUMN stage_id TEXT');
+    this.stages = new AgentStageStore(this.db);
+    // Metadata-only adoption: never reorder sessions or attribute legacy events to invented stages.
+    this.unit(() => {
+      for (const session of this.list()) {
+        this.stages.sync(session);
+        this.db
+          .prepare('UPDATE sessions SET data=? WHERE id=?')
+          .run(JSON.stringify(session), session.id);
+      }
+    });
+    this.stages.recover();
     this.reports = new ReportStore(this.db);
     this.usage = new UsageLedger(this.db);
     this.unifiedTasks = hasUnifiedTaskModel(this.db);
@@ -607,6 +638,7 @@ export class Store {
       stamp = session.updatedAt;
     try {
       this.unit(() => {
+        this.stages.sync(session, before);
         session.updatedAt = Date.now();
         this.db
           .prepare('INSERT OR REPLACE INTO sessions VALUES (?,?,?,?)')
@@ -633,10 +665,17 @@ export class Store {
     return this.unit(() => {
       const at = Date.now(),
         result = this.db
-          .prepare('INSERT INTO events(session_id,type,text,at) VALUES (?,?,?,?)')
-          .run(sessionId, type, text, at);
+          .prepare('INSERT INTO events(session_id,type,text,at,stage_id) VALUES (?,?,?,?,?)')
+          .run(sessionId, type, text, at, this.get(sessionId)?.currentStageId ?? null);
       if (type === 'user') this.syncInteractiveTasks(sessionId);
-      return { id: Number(result.lastInsertRowid), sessionId, type, text, at };
+      return {
+        id: Number(result.lastInsertRowid),
+        sessionId,
+        type,
+        text,
+        at,
+        stageId: this.get(sessionId)?.currentStageId,
+      };
     });
   }
   reportEvidence(id: string, end: number) {
@@ -703,6 +742,17 @@ export class Store {
       this.db.prepare('SELECT max(id) AS n FROM events WHERE session_id=?').get(id)?.n ?? 0,
     );
   }
+  relayEvidenceId(id: string): number {
+    return Number(
+      this.db
+        .prepare(
+          `SELECT coalesce(max(id),0) n FROM events WHERE session_id=?
+      AND type IN ('user','response','assistant','tool','agent_input','context_reset',
+      'topic_progress','task_progress','handoff_received','session_reopened')`,
+        )
+        .get(id)?.n,
+    );
+  }
   reportCutoff(id: string, after: number): number {
     const opened = this.db
       .prepare(
@@ -722,14 +772,14 @@ export class Store {
   events(sessionId: string, limit = 200): StoredEvent[] {
     return this.db
       .prepare(
-        'SELECT * FROM (SELECT id, session_id as sessionId, type, text, at FROM events WHERE session_id=? ORDER BY id DESC LIMIT ?) ORDER BY id',
+        'SELECT * FROM (SELECT id, session_id as sessionId, stage_id AS stageId, type, text, at FROM events WHERE session_id=? ORDER BY id DESC LIMIT ?) ORDER BY id',
       )
       .all(sessionId, limit) as unknown as StoredEvent[];
   }
   handoffEvents(sessionId: string): StoredEvent[] {
     return this.db
       .prepare(
-        "SELECT id,session_id AS sessionId,type,text,at FROM events WHERE session_id=? AND type='handoff_received' ORDER BY id DESC LIMIT 100",
+        "SELECT id,session_id AS sessionId,stage_id AS stageId,type,text,at FROM events WHERE session_id=? AND type='handoff_received' ORDER BY id DESC LIMIT 100",
       )
       .all(sessionId) as unknown as StoredEvent[];
   }
@@ -737,33 +787,40 @@ export class Store {
     sessionId: string,
     before = Number.MAX_SAFE_INTEGER,
     limit = 120,
+    stageId?: string,
   ): StoredEvent[] {
     return this.db
       .prepare(
-        `SELECT id,session_id AS sessionId,type,text,at FROM events
-      WHERE session_id=? AND id<? AND type IN ('user','assistant','tool','agent_tool','agent_input','error','decision','agent_run','topic_summary_input')
+        `SELECT id,session_id AS sessionId,stage_id AS stageId,type,text,at FROM events
+      WHERE session_id=? AND id<? AND (? IS NULL OR stage_id=?) AND type IN ('user','assistant','tool','agent_tool','agent_input','error','decision','agent_run','topic_summary_input','task_report_read')
       ORDER BY id DESC LIMIT ?`,
       )
-      .all(sessionId, before, limit + 1) as unknown as StoredEvent[];
+      .all(
+        sessionId,
+        before,
+        stageId ?? null,
+        stageId ?? null,
+        limit + 1,
+      ) as unknown as StoredEvent[];
   }
   latestEvent(sessionId: string, type: string): StoredEvent | undefined {
     return this.db
       .prepare(
-        'SELECT id,session_id AS sessionId,type,text,at FROM events WHERE session_id=? AND type=? ORDER BY id DESC LIMIT 1',
+        'SELECT id,session_id AS sessionId,stage_id AS stageId,type,text,at FROM events WHERE session_id=? AND type=? ORDER BY id DESC LIMIT 1',
       )
       .get(sessionId, type) as unknown as StoredEvent | undefined;
   }
   planEvents(sessionId: string, limit: number, before?: number): StoredEvent[] {
     return this.db
       .prepare(
-        "WITH latest AS (SELECT id,session_id AS sessionId,type,text,at,row_number() OVER (PARTITION BY json_extract(text,'$.runId') ORDER BY id DESC) AS rank FROM events WHERE session_id=? AND type='agent_plan' AND json_valid(text) AND json_extract(text,'$.runId') IS NOT NULL) SELECT id,sessionId,type,text,at FROM latest WHERE rank=1 AND (? IS NULL OR id<?) ORDER BY id DESC LIMIT ?",
+        "WITH latest AS (SELECT id,session_id AS sessionId,stage_id AS stageId,type,text,at,row_number() OVER (PARTITION BY json_extract(text,'$.runId') ORDER BY id DESC) AS rank FROM events WHERE session_id=? AND type='agent_plan' AND json_valid(text) AND json_extract(text,'$.runId') IS NOT NULL) SELECT id,sessionId,stageId,type,text,at FROM latest WHERE rank=1 AND (? IS NULL OR id<?) ORDER BY id DESC LIMIT ?",
       )
       .all(sessionId, before ?? null, before ?? null, limit) as unknown as StoredEvent[];
   }
   planRunEvent(sessionId: string, runId: string): StoredEvent | undefined {
     return this.db
       .prepare(
-        "SELECT id,session_id AS sessionId,type,text,at FROM events WHERE session_id=? AND type='agent_run' AND json_valid(text) AND json_extract(text,'$.runId')=? ORDER BY id DESC LIMIT 1",
+        "SELECT id,session_id AS sessionId,stage_id AS stageId,type,text,at FROM events WHERE session_id=? AND type='agent_run' AND json_valid(text) AND json_extract(text,'$.runId')=? ORDER BY id DESC LIMIT 1",
       )
       .get(sessionId, runId) as unknown as StoredEvent | undefined;
   }
@@ -775,7 +832,7 @@ export class Store {
     const sql =
       query.kind === 'tools'
         ? `WITH latest AS (SELECT id,session_id AS sessionId,type,text,at,row_number() OVER (PARTITION BY json_extract(text,'$.runId'),json_extract(text,'$.id') ORDER BY id DESC) AS rank FROM events WHERE session_id=? AND type='tool' AND json_valid(text) AND json_extract(text,'$.runId') IS NOT NULL AND json_extract(text,'$.id') IS NOT NULL) SELECT id,sessionId,type,text,at FROM latest WHERE rank=1 AND ${filter} ORDER BY id DESC LIMIT ?`
-        : `SELECT id,session_id AS sessionId,type,text,at FROM events WHERE session_id=? AND type='interaction' AND json_valid(text) AND json_extract(text,'$.kind')='approval' AND ${filter} ORDER BY id DESC LIMIT ?`;
+        : `SELECT id,session_id AS sessionId,stage_id AS stageId,type,text,at FROM events WHERE session_id=? AND type='interaction' AND json_valid(text) AND json_extract(text,'$.kind')='approval' AND ${filter} ORDER BY id DESC LIMIT ?`;
     return this.db
       .prepare(sql)
       .all(
@@ -790,14 +847,14 @@ export class Store {
   interactionEvent(sessionId: string, id: string): StoredEvent | undefined {
     return this.db
       .prepare(
-        "SELECT id,session_id AS sessionId,type,text,at FROM events WHERE session_id=? AND type='interaction' AND json_valid(text) AND json_extract(text,'$.id')=? ORDER BY id DESC LIMIT 1",
+        "SELECT id,session_id AS sessionId,stage_id AS stageId,type,text,at FROM events WHERE session_id=? AND type='interaction' AND json_valid(text) AND json_extract(text,'$.id')=? ORDER BY id DESC LIMIT 1",
       )
       .get(sessionId, id) as unknown as StoredEvent | undefined;
   }
   interactionHistory(sessionId: string, id: string): StoredEvent[] {
     return this.db
       .prepare(
-        "SELECT id,session_id AS sessionId,type,text,at FROM events WHERE session_id=? AND type IN ('decision','interaction_timeout','interaction_closed') AND json_valid(text) AND json_extract(text,'$.id')=? ORDER BY id",
+        "SELECT id,session_id AS sessionId,stage_id AS stageId,type,text,at FROM events WHERE session_id=? AND type IN ('decision','interaction_timeout','interaction_closed') AND json_valid(text) AND json_extract(text,'$.id')=? ORDER BY id",
       )
       .all(sessionId, id) as unknown as StoredEvent[];
   }

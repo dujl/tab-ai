@@ -18,25 +18,25 @@ Dashboard 对话工具栏也直接提供 **审批策略**；飞书首页的 **�
 
 需要减少开发测试中的人工确认时，可在当前会话选择 **按需审批 · 原生自动审查**（`/tab approval on-request-auto-review`）。框架对 Codex 或 TRAE CLI 的该 Session 传入 `approvalPolicy: on-request` 和 `approvalsReviewer: auto_review`；普通沙箱内操作继续执行，额外权限请求由当前原生 Agent 根据风险和用户授权审查，并可能拒绝。自动审查可能增加模型用量。原生未确认此模式时不启动工作，不能静默降级为其他策略。切回普通按需审批会显式恢复 `user` 审查者；选择原生配置时不传覆盖参数。此选项不修改全局配置，不影响其他会话，也不会因命令包含 `pytest` 就批准整个脚本。
 
-**本会话自动允许**（`auto-allow`）是框架策略，与原生自动审查不同。审批卡片的“本会话自动允许”同时批准本次请求，并立即覆盖当前轮次的其他待审批和后续命令、文件请求；未来轮次在同一个 Session 中继续有效。每次自动决定仍保存审批详情、授权范围和自动批准标识。提问、MCP 表单、登录授权、其他 Agent、其他 Session 以及不提供原生 accept 决定的请求不在范围内。框架只回传原生单次 accept，不修改全局规则或放宽原生沙箱及组织限制。
+**本会话自动允许**（`auto-allow`）是框架策略，与原生自动审查不同。审批卡片的“本会话自动允许”同时批准本次请求，并立即覆盖当前轮次的其他待审批和后续命令、文件请求；未来轮次在同一个 Session 中继续有效。每次自动决定仍保存审批详情、授权范围和自动批准标识。提问、MCP 表单、登录授权、不支持此模式的 Agent、其他 Session 以及不提供原生 accept 决定的请求不在范围内。框架只回传原生单次 accept，不修改全局规则或放宽原生沙箱及组织限制。
 
-可随时使用 `/tab approval on-request` 或 `/tab approval clear` 取消自动允许；之后的请求恢复人工处理。关闭、重置也取消，子任务不继承；服务重启后，同一个未关闭 Session 保留用户明确选择的策略。终端接管不使用框架的自动决定。
+可随时使用 `/tab approval clear` 取消自动允许（Codex/TRAE CLI 也可用 `/tab approval on-request`）；之后的请求恢复人工处理。关闭、重置也取消，子任务不继承；服务重启后，同一个未关闭 Session 保留用户明确选择的策略。终端接管不使用框架的自动决定。
 
 本机 HTTP 端口测试即使文件位于可写工作区内，也可能受原生网络沙箱限制。`UV_CACHE_DIR` 等环境变量赋值与测试执行器在审批摘要中分开识别；摘要不改变原始命令、授权范围或原生决定。相关边界见 [OpenAI 官方审批说明](https://learn.chatgpt.com/docs/agent-approvals-security)。
 
-| Agent           | 本会话策略                                                               | 单次审批                                                                       |
-| --------------- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------ |
-| Codex           | native、untrusted、on-request、on-request-auto-review、auto-allow、never | 按原生 availableDecisions 提供对应选项；命令及文件请求可显式开启本会话自动允许 |
-| TRAE CLI        | native、untrusted、on-request、on-request-auto-review、auto-allow、never | 按原生 availableDecisions 提供对应选项；命令及文件请求可显式开启本会话自动允许 |
-| Antigravity CLI | native、default、accept-edits、auto、plan                                | 本次允许、相同请求范围在本会话允许、拒绝、取消                                 |
-| Claude Code     | native、default、acceptEdits、dontAsk                                    | 本次允许；原生提供完整可支持的 allow 规则建议时提供本会话允许；拒绝/取消       |
-| OpenCode        | 沿用原生配置                                                             | 本次允许、相同请求范围在本会话允许、拒绝                                       |
+| Agent           | 本会话策略                                                               | 单次审批                                                                         |
+| --------------- | ------------------------------------------------------------------------ | -------------------------------------------------------------------------------- |
+| Codex           | native、untrusted、on-request、on-request-auto-review、auto-allow、never | 按原生 availableDecisions 提供对应选项；命令及文件请求可显式开启本会话自动允许   |
+| TRAE CLI        | native、untrusted、on-request、on-request-auto-review、auto-allow、never | 按原生 availableDecisions 提供对应选项；命令及文件请求可显式开启本会话自动允许   |
+| Antigravity CLI | native、default、accept-edits、auto、auto-allow、plan                    | 本次允许、重复此操作在本会话允许、命令与文件修改可开启本会话自动允许、拒绝、取消 |
+| Claude Code     | native、default、acceptEdits、dontAsk                                    | 本次允许；原生提供完整可支持的 allow 规则建议时提供本会话允许；拒绝/取消         |
+| OpenCode        | 沿用原生配置                                                             | 本次允许、相同请求范围在本会话允许、拒绝                                         |
 
 `never/dontAsk` 表示不弹审批、权限不足时不批准，不等于全权限。`untrusted` 仍由当前 Codex 或 TRAE CLI 原生 Agent 判断可信命令，不把它标作“所有工具每次必问”。不支持的策略或选项明确拒绝。保持 `native` 时不添加覆盖参数。
 
 Codex CLI 0.163.0 的协议列出 `untrusted`、`on-request`、`never` 和分类策略。官方配置文档对 `untrusted` 的支持说明可能不同，部署到其他版本时需要核对其原生协议；框架不会静默将被原生拒绝的策略替换成其他权限模式。持久命令／网络规则修订可能超出单个 Session 的作用域，当前不将其包装成“允许所有”或会话内授权。
 
-显式策略保存在当前 Session 的 `approvalPolicy`，可以在同一会话重启后继续使用；重置得到的新 session 和新子任务不继承独立策略，Codex 和 TRAE CLI 使用默认 `on-request`。未设置字段不需要批量改写数据库。清除临时授权保留其他策略字段；自动允许会恢复为 on-request。临时授权按提供方和 Session 保存在运行实例内存中，关闭、重置、服务重启、显式清除后失效；原历史、nativeId、已发生的审批记录均保留且不跨提供方共享。
+显式策略保存在当前 Session 的 `approvalPolicy`，可以在同一会话重启后继续使用；重置得到的新 session 和新子任务不继承独立策略，Codex 和 TRAE CLI 使用默认 `on-request`。未设置字段不需要批量改写数据库。清除临时授权保留其他策略字段；自动允许会恢复为本 Agent 的人工模式：Codex/TRAE CLI 为 on-request，AGY 为 default。临时授权按提供方和 Session 保存在运行实例内存中，关闭、重置、服务重启、显式清除后失效；原历史、nativeId、已发生的审批记录均保留且不跨提供方共享。
 
 ## 各原生适配器的边界
 
@@ -48,7 +48,9 @@ Codex CLI 0.163.0 的协议列出 `untrusted`、`on-request`、`never` 和分类
 
 **OpenCode**：不同版本的原生 `always` 可能保存项目规则。本框架不回传 `always`，而将权限类型与完整 patterns 集合保存在当前 tab-ai session 的内存中；相同请求范围再次出现时回传 `once`。不做命令前缀或通配符的自行扩大匹配，不写入项目授权。复用会在原会话活动记录中说明。
 
-**Antigravity CLI**：通过 ACP `session/request_permission` 展示审批请求；选择“本会话允许”时仅在当前 tab-ai Session 内存中保存精确的 tool/input/locations 范围并回传原生单次允许，不写入全局用户设置、不跨会话共享；“取消”回传 ACP `cancelled` 结果。模式策略（`default`、`accept-edits`、`auto`、`plan`）通过 ACP `session/set_config_option` 或 `session/set_mode` 下发。
+**Antigravity CLI**：`auto` 是原生自动模式，仍由原生策略判断高风险操作；`auto-allow` 是用户显式选择的框架自动允许。后者仅覆盖提供原生 allow_once 的 execute / edit 审批，不覆盖其他权限、问题或登录授权；框架向 ACP 传 default 模式并逐次回传 allow_once，绝不把 auto-allow 当作原生模式名。当前轮可从审批卡片开启，清除授权立即取消框架自动决定；未来轮次沿用 default，当前轮原生策略本身不被重写。关闭、重置与接力也清除框架自动允许。
+
+通过 ACP `session/request_permission` 展示审批请求；选择“允许本会话重复此操作”时仅在当前 tab-ai Session 内存中保存完全相同的 kind/title/input/locations 范围并回传原生单次允许，不写入全局用户设置、不跨会话共享；只提供持久 allow_always / reject_always 的原生请求不被包装为单次或会话内授权；用户可取消并在原生终端检查。“取消”回传 ACP `cancelled` 结果。模式策略（`default`、`accept-edits`、`auto`、`plan`）通过 ACP `session/set_config_option` 或 `session/set_mode` 下发。
 
 ## 交互与审计
 

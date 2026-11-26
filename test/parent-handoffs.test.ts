@@ -436,6 +436,14 @@ test('the transcript records actual assembled native input, instructions, public
         instructions: '公开的本轮附加指令',
         instructionMode: 'codex-developer',
       });
+      run.hooks.inputAccepted?.({
+        nativeId: 'same-parent-native',
+        evidence: 'test native acknowledgement',
+      });
+      run.hooks.inputAccepted?.({
+        nativeId: 'same-parent-native',
+        evidence: 'test native acknowledgement',
+      });
       run.hooks.tool?.({
         id: 'research-read',
         name: '读取交接资料',
