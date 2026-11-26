@@ -69,6 +69,35 @@
             <div id="task-tabs" class="task-tabs" aria-label="任务视图"></div>
           </div>
         </section>
+        <section id="token-usage-panel" class="usage-panel" hidden>
+          <div class="usage-header">
+            <div class="usage-title-group">
+              <h2>Token 用量</h2>
+              <span id="token-usage-scope" class="usage-badge" hidden></span>
+              <span id="token-usage-lifecycle" class="usage-badge is-muted" hidden></span>
+            </div>
+            <div class="usage-actions">
+              <span id="token-usage-note" class="footnote usage-status" role="status"></span>
+              <button id="token-usage-refresh" type="button">刷新用量</button>
+            </div>
+          </div>
+          <div class="usage-context-strip">
+            <div class="usage-context-row">
+              <p id="token-usage-context" class="usage-context"></p>
+              <span id="token-usage-context-meta" class="footnote usage-context-meta"></span>
+            </div>
+            <div id="token-usage-progress" class="usage-bar" hidden></div>
+          </div>
+          <div id="token-usage-summary"></div>
+          <details id="token-usage-history">
+            <summary>精确明细、子任务与逐轮记录</summary>
+            <div id="token-usage-table" class="usage-table-wrap"></div>
+            <div id="token-usage-children"></div>
+            <div id="token-usage-detail"></div>
+            <div id="token-usage-runs"></div>
+            <button id="token-usage-more" type="button" hidden>加载更早轮次</button>
+          </details>
+        </section>
         <section id="task-detail" class="task-detail" hidden></section>
         <section id="records-panel" class="records-panel" hidden>
           <div class="panel-heading">

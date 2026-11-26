@@ -71,16 +71,22 @@ export function claudeUsage(message: unknown): AgentUsage | undefined {
         source: 'claude',
         last: {
           inputTokens: input,
-          cachedInputTokens: v.cache_read_input_tokens ?? 0,
-          cacheWriteInputTokens: v.cache_creation_input_tokens ?? 0,
+          ...(v.cache_read_input_tokens == null
+            ? {}
+            : { cachedInputTokens: v.cache_read_input_tokens }),
+          ...(v.cache_creation_input_tokens == null
+            ? {}
+            : { cacheWriteInputTokens: v.cache_creation_input_tokens }),
           outputTokens: v.output_tokens,
         },
         contextTokens: input + (v.cache_creation_input_tokens ?? 0) + v.output_tokens,
         contextKind: 'last-call',
+        ...(typeof m.message?.id === 'string' ? { sampleId: m.message.id } : {}),
+        ...(typeof m.message?.model === 'string' ? { actualModel: m.message.model } : {}),
       };
     }
   }
-  if (m?.type === 'result' && m.subtype === 'success' && !m.is_error) {
+  if (m?.type === 'result') {
     const p = z.record(z.string(), claudeModel).safeParse(m.modelUsage);
     if (p.success && Object.keys(p.data).length) {
       const total: TokenBreakdown = {
@@ -91,7 +97,7 @@ export function claudeUsage(message: unknown): AgentUsage | undefined {
       };
       for (const v of Object.values(p.data)) {
         total.inputTokens += v.inputTokens + v.cacheReadInputTokens;
-        total.cachedInputTokens += v.cacheReadInputTokens;
+        total.cachedInputTokens! += v.cacheReadInputTokens;
         total.cacheWriteInputTokens! += v.cacheCreationInputTokens;
         total.outputTokens += v.outputTokens;
       }
@@ -99,7 +105,11 @@ export function claudeUsage(message: unknown): AgentUsage | undefined {
       return {
         source: 'claude',
         total,
-        totalScope: 'query',
+        // Installed SDK documents resume/fork restoring pipeline totals from
+        // the transcript. Summing results across query() calls double counts.
+        totalScope: 'pipeline',
+        complete: m.subtype === 'success' && !m.is_error,
+        ...(entries.length === 1 ? { actualModel: Object.keys(p.data)[0]! } : {}),
         ...(entries.length === 1 && entries[0]!.contextWindow
           ? { modelContextWindow: entries[0]!.contextWindow }
           : {}),

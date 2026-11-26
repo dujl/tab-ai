@@ -25,7 +25,7 @@ npm run verify
 ## 运行相关回归
 
 ```sh
-npx tsx --test --test-concurrency=4 test/native-usage-history.test.ts test/token-usage.test.ts
+npx tsx --test --test-concurrency=4 test/native-usage-history.test.ts test/token-usage.test.ts test/usage-ledger.test.ts test/usage-panel.test.ts
 npx tsx --test --test-concurrency=4 test/session-menu.test.ts test/session-controls.test.ts
 npx tsx --test --test-concurrency=4 test/tasks.test.ts test/dual-entry.test.ts
 ```

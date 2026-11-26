@@ -1,4 +1,5 @@
 import { ReportStore } from './report-store.js';
+import { UsageLedger } from './usage-ledger.js';
 import type { TaskRecord, TaskJob } from './task-model.js';
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync, chmodSync } from 'node:fs';
@@ -50,6 +51,7 @@ export class Store {
   private db: DatabaseSync;
   private receiptCleanup?: NodeJS.Timeout;
   readonly reports: ReportStore;
+  readonly usage: UsageLedger;
   private unifiedTasks = false;
   taskModelUnified(): boolean {
     return this.unifiedTasks;
@@ -141,8 +143,17 @@ export class Store {
       CREATE INDEX IF NOT EXISTS events_session_type ON events(session_id,type,id);
     `);
     this.reports = new ReportStore(this.db);
+    this.usage = new UsageLedger(this.db);
     this.unifiedTasks = hasUnifiedTaskModel(this.db);
     for (const session of this.list()) {
+      if (session.tokenLedger?.current.status === 'running') {
+        this.unit(() => {
+          this.usage.recover(session);
+          this.db
+            .prepare('UPDATE sessions SET data=? WHERE id=?')
+            .run(JSON.stringify(session), session.id);
+        });
+      }
       // Recover an explicit native-policy choice from its audit event when the field is absent.
       if (
         (session.agent === 'codex' || session.agent === 'traecli') &&

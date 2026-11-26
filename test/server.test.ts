@@ -2,7 +2,68 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { request as httpRequest } from 'node:http';
 import { createDashboard } from '../src/web/server.js';
-import { fixture } from './helpers.js';
+import { fixture, incoming } from './helpers.js';
+import { usageInformation } from '../src/core/token-usage.js';
+
+test('session usage API and list summaries agree with chat, paginate runs, reject unauthenticated reads and remain read-only', async () => {
+  const f = fixture(),
+    server = createDashboard(f.manager, 'token');
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+  const headers = { Authorization: 'Bearer token' };
+  try {
+    f.agent.handler = async ({ hooks }) => {
+      hooks.nativeId('native-1');
+      const input = f.agent.inputs.length * 100;
+      const value = {
+        source: 'codex' as const,
+        totalScope: 'session' as const,
+        total: {
+          inputTokens: input,
+          outputTokens: 20,
+          cachedInputTokens: 80,
+          cacheWriteInputTokens: 5,
+        },
+        contextTokens: 50,
+        modelContextWindow: 200,
+      };
+      hooks.usage?.(value);
+      hooks.usage?.(value);
+      hooks.text('done');
+    };
+    for (const text of ['第一轮', '第二轮']) {
+      await f.manager.receive(incoming(text));
+      await f.manager.idle();
+    }
+    const session = f.store.current(incoming('').route)!;
+    const before = JSON.stringify(f.store.get(session.id));
+    const path = `/api/sessions/${session.id}/usage?limit=1`;
+    assert.equal((await fetch(base + path)).status, 401);
+    const page = (await fetch(base + path, { headers }).then((r) => r.json())) as any;
+    assert.deepEqual(page.tokenInformation, JSON.parse(JSON.stringify(usageInformation(session))));
+    assert.equal(page.tokenInformation.cumulative.input, '205');
+    assert.equal(page.tokenInformation.currentRound.input, '100');
+    assert.equal(page.runs.length, 1);
+    assert.equal(page.runs[0].information.input, '100');
+    assert.ok(!('baseline' in page.runs[0]));
+    const older = (await fetch(
+      base + `/api/sessions/${session.id}/usage?limit=1&before=${page.nextBefore}`,
+      { headers },
+    ).then((r) => r.json())) as any;
+    assert.notEqual(older.runs[0].runId, page.runs[0].runId);
+    assert.equal(
+      (await fetch(base + `/api/sessions/${session.id}/usage?limit=51`, { headers })).status,
+      400,
+    );
+    const state = (await fetch(base + '/api/state', { headers }).then((r) => r.json())) as any;
+    assert.equal(state.sessionUsage[session.id].cumulative.input, '205');
+    assert.equal(JSON.stringify(f.store.get(session.id)), before);
+    assert.equal(f.agent.inputs.length, 2);
+  } finally {
+    await new Promise<void>((r) => server.close(() => r()));
+    await f.cleanup();
+  }
+});
 
 test('dashboard requires a token and rejects cross-origin/rebinding requests', async () => {
   const f = fixture(),
@@ -230,6 +291,89 @@ test('dashboard child creation reopens completed ancestors, inherits workspace a
       f.agent.inputs.some((i) => i.text.startsWith('dashboard followup\n\n【任务分支索引')),
     );
     assert.ok(f.store.taskJobs().some((j) => j.taskId === c.id && j.text === 'dashboard followup'));
+  } finally {
+    await new Promise<void>((r) => server.close(() => r()));
+    await f.cleanup();
+  }
+});
+
+test('usage API and state summaries aggregate task resets and descendant subtask totals without mutating state', async () => {
+  const { incoming, until } = await import('./helpers.js');
+  const f = fixture();
+  f.agent.handler = async (run) => {
+    run.hooks.nativeId(
+      run.session.nativeId ?? 'native-' + run.session.id + '-' + f.agent.inputs.length,
+    );
+    run.hooks.usage?.({
+      source: 'codex',
+      totalScope: 'session',
+      total: { inputTokens: 1000, cachedInputTokens: 400, outputTokens: 200 },
+      contextTokens: 500,
+      modelContextWindow: 2000,
+    });
+    run.hooks.text('done');
+  };
+  const server = createDashboard(f.manager, 'token');
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+  const base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+  const headers = { Authorization: 'Bearer token' };
+  try {
+    const source = f.store.create(incoming('', 'alice', '').route, 'codex', f.dir);
+    const root = await f.manager.createTask({
+      sourceSessionId: source.id,
+      key: 'root-usage',
+      title: '父任务',
+      objective: 'root',
+    });
+    await until(() => f.store.taskRecord(root.id)?.state === 'waiting');
+    await f.manager.idle();
+    await until(() => f.store.get(root.sessionId!)?.tokenLedger?.current.status === 'completed');
+
+    // Reset parent session once and run a second context
+    const resetInfo = f.manager.resetInfo(root.sessionId!);
+    await f.manager.resetSession(root.sessionId!, resetInfo.revision);
+    await fetch(base + `/api/sessions/${root.sessionId}/messages`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ text: 'parent turn 2' }),
+    });
+    await until(() => f.store.get(root.sessionId!)?.tokenLedger?.current.status === 'completed');
+    await f.manager.idle();
+
+    const childRes = await fetch(base + `/api/tasks/${root.id}/children`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        key: 'child-usage',
+        title: '子任务',
+        objective: 'child',
+        criteria: 'ok',
+      }),
+    });
+    const child = (await childRes.json()) as any;
+    await until(() => f.store.taskRecord(child.id)?.state === 'waiting');
+    await f.manager.idle();
+    await until(() => f.store.get(child.sessionId)?.tokenLedger?.current.status === 'completed');
+
+    const before = JSON.stringify(f.store.get(root.sessionId!));
+    const state = (await fetch(base + '/api/state', { headers }).then((r) => r.json())) as any;
+    const summary = state.sessionUsage[root.sessionId!];
+    assert.equal(summary.resets, 1);
+    assert.equal(summary.cumulative.total, '1,200');
+    assert.equal(summary.taskCumulative.total, '2,400');
+    assert.equal(summary.subtree.descendantCount, 1);
+    assert.equal(summary.subtree.total.total, '3,600');
+    assert.equal(summary.subtree.children, undefined);
+
+    const usage = (await fetch(base + `/api/sessions/${root.sessionId}/usage`, { headers }).then(
+      (r) => r.json(),
+    )) as any;
+    assert.equal(usage.tokenInformation.taskCumulative.total, '2,400');
+    assert.equal(usage.tokenInformation.subtree.total.total, '3,600');
+    assert.equal(usage.tokenInformation.subtree.children.length, 1);
+    assert.equal(usage.tokenInformation.subtree.children[0].title, '子任务');
+    assert.equal(usage.tokenInformation.subtree.children[0].task.total, '1,200');
+    assert.equal(JSON.stringify(f.store.get(root.sessionId!)), before);
   } finally {
     await new Promise<void>((r) => server.close(() => r()));
     await f.cleanup();

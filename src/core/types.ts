@@ -115,6 +115,8 @@ export interface Session {
   status: 'idle' | 'running' | 'waiting' | 'interrupted' | 'error' | 'detached' | 'closed';
   operation?: 'compact';
   tokenUsage?: NativeUsageSnapshot;
+  tokenLedger?: import('./usage-ledger.js').UsageSummary;
+  archivedTokenUsage?: import('./usage-ledger.js').ArchivedUsageSummary;
   contextUsageInvalidated?: boolean;
   lastCompactionTokens?: { nativeId: string; before?: number; after?: number; at: number };
   createdAt: number;
@@ -238,10 +240,13 @@ export interface NativeUsageSnapshot {
   origin?: 'native-history';
   compactedAt?: number;
   contextInvalidated?: boolean;
+  contextAt?: number;
+  totalAt?: number;
+  lastAt?: number;
 }
 export interface TokenBreakdown {
   inputTokens: number;
-  cachedInputTokens: number;
+  cachedInputTokens?: number;
   outputTokens: number;
   totalTokens?: number;
   cacheWriteInputTokens?: number;
@@ -251,7 +256,10 @@ export interface AgentUsage {
   source: AgentKind;
   last?: TokenBreakdown;
   total?: TokenBreakdown;
-  totalScope?: 'session' | 'query';
+  totalScope?: 'session' | 'query' | 'pipeline';
+  sampleId?: string;
+  complete?: boolean;
+  actualModel?: string;
   contextTokens?: number;
   modelContextWindow?: number;
   contextKind?: 'native' | 'last-call';

@@ -3,8 +3,11 @@ import { sessionIdentity } from './session-identity.js';
 import { agentNames, type Session, type SessionInformation } from './types.js';
 import { approvalModes, selectedApprovalPolicy } from './approval-policy.js';
 import { sessionName } from './session-title.js';
-export function sessionInformation(session: Session): SessionInformation {
-  const usage = usageInformation(session);
+export function sessionInformation(
+  session: Session,
+  precomputedUsage?: ReturnType<typeof usageInformation>,
+): SessionInformation {
+  const usage = precomputedUsage ?? usageInformation(session);
   const mode = selectedApprovalPolicy(session);
   const effort = session.settings?.effort;
   const effortNames: Record<string, string> = {
@@ -44,8 +47,63 @@ export function sessionInformation(session: Session): SessionInformation {
     name: sessionName(session),
     status: session.operation === 'compact' ? '正在压缩会话' : statuses[session.status],
     fields: [
-      { label: '上下文占用', value: usage.context },
-      { label: 'Token 消耗', value: usage.total },
+      {
+        label: '上下文占用',
+        shortValue: usage.contextKindLabel
+          ? `${usage.contextShort}（${usage.contextKindLabel}）`
+          : usage.contextShort,
+        value: usage.context,
+      },
+      {
+        label: 'Token 消耗',
+        shortValue: usage.cumulative.hasValue
+          ? `${usage.cumulative.short.total}（${usage.totalScopeShort}${usage.cumulative.partial ? ' · 部分' : ''}）`
+          : usage.total,
+        value: usage.total,
+      },
+      ...(usage.resets > 0
+        ? [
+            {
+              label: '本任务累计',
+              shortValue: `${usage.taskCumulative.short.total}（含 ${usage.resets} 次重置${usage.compactions > 0 ? ` · ${usage.compactions} 次压缩` : ''}）`,
+              value: `${usage.taskCumulative.total} tokens（${usage.taskCumulative.scope}）`,
+            },
+          ]
+        : []),
+      ...(usage.subtree
+        ? [
+            {
+              label: '含子任务总计',
+              shortValue: `${usage.subtree.total.short.total}（本任务 ${usage.taskCumulative.short.total} + ${usage.subtree.descendantCount} 子任务 ${usage.subtree.childrenTotal.short.total}）`,
+              value: `${usage.subtree.total.total} tokens（本任务 ${usage.taskCumulative.total} + ${usage.subtree.descendantCount} 个子任务 ${usage.subtree.childrenTotal.total}）`,
+            },
+          ]
+        : []),
+      {
+        label: '累计输入',
+        shortValue: usage.cumulative.short.input,
+        value: usage.cumulative.input,
+      },
+      {
+        label: '累计输出',
+        shortValue: usage.cumulative.short.output,
+        value: usage.cumulative.output,
+      },
+      {
+        label: '缓存读取',
+        shortValue: usage.cumulative.short.cacheRead,
+        value: usage.cumulative.cacheRead,
+      },
+      {
+        label: '缓存写入',
+        shortValue: usage.cumulative.short.cacheWrite,
+        value: usage.cumulative.cacheWrite,
+      },
+      {
+        label: '本轮消耗',
+        shortValue: `${usage.currentRound.label}：${usage.roundShort}`,
+        value: `${usage.currentRound.label}：${usage.round}`,
+      },
       { label: 'Agent', value: agentNames[session.agent] },
       {
         label: '思考深度',

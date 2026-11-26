@@ -345,15 +345,142 @@ test('session information uses compact rows with native token placeholders, pres
     const info = card.body.elements[0],
       column = info.columns[0];
     assert.equal(column.vertical_spacing, '4px');
-    assert.equal(column.elements.length, 8);
+    assert.ok(JSON.stringify(column.elements).includes('缓存读取：未上报'));
+    assert.ok(JSON.stringify(column.elements).includes('缓存写入：未上报'));
+    assert.ok(JSON.stringify(column.elements).includes('历史未采集'));
+    assert.ok(
+      es.some(
+        (e) =>
+          e.tag === 'collapsible_panel' && e.header?.title?.content === 'Token 明细 · 本轮与累计',
+      ),
+    );
     assert.ok(JSON.stringify(column.elements).includes('上下文：未上报'));
     assert.ok(JSON.stringify(column.elements).includes('状态：空闲'));
     assert.ok(JSON.stringify(column.elements).includes('Agent：Codex'));
     assert.ok(JSON.stringify(column.elements).includes('审批：按需审批'));
     assert.ok(!JSON.stringify(column.elements).includes('紧凑信息测试'));
-    const detail = es.find((e) => e.tag === 'collapsible_panel');
+    const detail = es.find(
+      (e) => e.tag === 'collapsible_panel' && e.header?.title?.content.includes('更多信息'),
+    );
     assert.ok(JSON.stringify(detail).includes('沿用原生，实际值未上报'));
     assert.ok(es.some((e) => e.text?.content === '目录：' + f.dir));
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test('Lark session card summarizes large token counts with compact K/M units while keeping exact numbers in Token details', async () => {
+  const f = managed();
+  try {
+    const s = f.store.create(incoming('').route, 'codex', f.dir);
+    s.nativeId = 'own';
+    s.tokenUsage = {
+      nativeId: 'own',
+      at: 1000,
+      value: {
+        source: 'codex',
+        contextTokens: 64_000,
+        modelContextWindow: 200_000,
+        totalScope: 'session',
+        total: {
+          inputTokens: 1_000_000,
+          cachedInputTokens: 840_000,
+          cacheWriteInputTokens: 50_000,
+          outputTokens: 150_000,
+        },
+      },
+    };
+    f.store.save(s);
+    await f.manager.receive(incoming('/tab menu'));
+    const v = f.views.at(-1)!,
+      card = larkManagementCard(f.cards.open(v.message, v.view)),
+      es = cardElements(card),
+      column = card.body.elements[0].columns[0];
+    const summaryElements = column.elements.filter((e: any) => e.tag !== 'collapsible_panel');
+    const summaryText = JSON.stringify(summaryElements);
+    assert.ok(summaryText.includes('64K / 200K · 32.0%'));
+    assert.ok(summaryText.includes('1.20M'));
+    assert.ok(summaryText.includes('输入：1.05M'));
+    assert.ok(summaryText.includes('输出：150K'));
+    assert.ok(summaryText.includes('缓存读取：840K'));
+    assert.ok(summaryText.includes('缓存写入：50K'));
+    const detail = es.find(
+      (e) =>
+        e.tag === 'collapsible_panel' && e.header?.title?.content === 'Token 明细 · 本轮与累计',
+    );
+    assert.ok(JSON.stringify(detail).includes('1,050,000'));
+    assert.ok(JSON.stringify(detail).includes('840,000'));
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test('Lark session card exposes both current session and task cumulative usage across resets and subtasks', async () => {
+  const f = managed();
+  try {
+    const parent = f.store.create(incoming('').route, 'codex', f.dir);
+    parent.taskId = parent.id;
+    parent.nativeId = 'p-old';
+    parent.tokenUsage = {
+      nativeId: 'p-old',
+      at: 1000,
+      value: {
+        source: 'codex',
+        totalScope: 'session',
+        total: { inputTokens: 800_000, cachedInputTokens: 600_000, outputTokens: 200_000 },
+      },
+    };
+    f.store.save(parent);
+    f.manager.tasks.adoptSession(parent.id);
+    await f.manager.resetSession(parent.id, f.manager.resetInfo(parent.id).revision);
+    const resetParent = f.store.get(parent.id)!;
+    resetParent.nativeId = 'p-new';
+    resetParent.tokenUsage = {
+      nativeId: 'p-new',
+      at: 2000,
+      value: {
+        source: 'codex',
+        totalScope: 'session',
+        total: { inputTokens: 400_000, cachedInputTokens: 300_000, outputTokens: 100_000 },
+      },
+    };
+    f.store.save(resetParent);
+
+    const child = await f.manager.tasks.createChild(parent.id, {
+      key: 'child-card',
+      title: '子任务卡片测试',
+      objective: 'subtask',
+      criteria: 'done',
+    });
+    const childSession = f.store.get(child.sessionId!)!;
+    childSession.nativeId = 'c-1';
+    childSession.tokenUsage = {
+      nativeId: 'c-1',
+      at: 2500,
+      value: {
+        source: 'codex',
+        totalScope: 'session',
+        total: { inputTokens: 250_000, cachedInputTokens: 100_000, outputTokens: 50_000 },
+      },
+    };
+    f.store.save(childSession);
+
+    await f.manager.receive(incoming('/tab menu'));
+    const v = f.views.at(-1)!,
+      card = larkManagementCard(f.cards.open(v.message, v.view)),
+      es = cardElements(card),
+      summaryText = JSON.stringify(
+        card.body.elements[0].columns[0].elements.filter((e: any) => e.tag !== 'collapsible_panel'),
+      );
+    assert.ok(summaryText.includes('消耗：500K'));
+    assert.ok(summaryText.includes('本任务累计：1.50M（含 1 次重置）'));
+    assert.ok(summaryText.includes('含子任务总计：1.80M（本任务 1.50M + 1 子任务 300K）'));
+    const detail = es.find(
+      (e) =>
+        e.tag === 'collapsible_panel' && e.header?.title?.content === 'Token 明细 · 本轮与累计',
+    );
+    assert.ok(JSON.stringify(detail).includes('1,500,000'));
+    assert.ok(JSON.stringify(detail).includes('1,800,000'));
   } finally {
     await f.cleanup();
   }

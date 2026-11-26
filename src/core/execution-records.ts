@@ -13,6 +13,7 @@ export function executionRecords(
   query: RecordQuery,
   pending: Interaction[],
   usageSession?: Session,
+  tokenInfo?: ReturnType<typeof usageInformation>,
 ) {
   const rows = store.recordEvents(sessionId, query),
     more = rows.length > query.limit,
@@ -41,7 +42,7 @@ export function executionRecords(
     nextBefore: more ? page.at(-1)?.id : undefined,
     kind: query.kind,
     ...(usage ? { usage } : {}),
-    ...(session ? { tokenInformation: usageInformation(session) } : {}),
+    ...(session ? { tokenInformation: tokenInfo ?? usageInformation(session) } : {}),
   };
 }
 

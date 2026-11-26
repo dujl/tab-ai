@@ -10,6 +10,7 @@ import { createServer } from 'node:net';
 import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { usageInformation } from '../src/core/token-usage.js';
 async function tool(run: any, name: string, args: any = {}) {
   const client = new Client({ name: 'dual-entry-test', version: '1' });
   try {
@@ -231,6 +232,13 @@ test('reset API protects revisions and resets task context without replacing tas
   try {
     const s = f.store.create(incoming('').route, 'codex', f.dir);
     s.nativeId = 'old-native';
+    f.store.usage.begin(s, 'old-usage', 'turn');
+    f.store.usage.record(
+      s,
+      { source: 'codex', totalScope: 'session', total: { inputTokens: 100, outputTokens: 20 } },
+      'old-usage',
+    );
+    f.store.usage.finish(s, 'old-usage', 'completed');
     f.store.save(s);
     f.manager.tasks.adoptSession(s.id);
     const info = f.manager.resetInfo(s.id);
@@ -239,6 +247,11 @@ test('reset API protects revisions and resets task context without replacing tas
     assert.equal(fresh.id, s.id);
     assert.equal(fresh.taskId, s.id);
     assert.equal(fresh.nativeId, undefined);
+    assert.equal(fresh.tokenLedger, undefined);
+    assert.equal(fresh.archivedTokenUsage?.resets, 1);
+    assert.equal(usageInformation(fresh).cumulative.hasValue, false);
+    assert.equal(usageInformation(fresh).taskCumulative.total, '120');
+    assert.equal(f.store.usage.list(s.id).runs[0]!.nativeId, 'old-native');
     assert.equal(f.store.taskRecord(s.id)!.sessionId, s.id);
     assert.equal(f.store.taskJobs().length, 0);
     assert.equal(f.agent.inputs.length, 0);

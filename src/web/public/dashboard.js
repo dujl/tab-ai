@@ -538,6 +538,7 @@ export function createConsole({ api, refresh, selectSession, showError }) {
     $('task-detail').hidden =
       !isTaskView || !n || ['conversation', 'records', 'todos'].includes(tab);
     $('records-panel').hidden = !isTaskView || !n?.session || tab !== 'records';
+    $('token-usage-panel').hidden = !isTaskView || !n?.session || !state.tokenUsage;
     $('session-pending').hidden = !isTaskView || tab !== 'conversation' || !!n?.session;
     $('create-child-session').hidden = !n?.session;
     $('create-child-session').disabled = !!n?.anomaly || n?.task?.state === 'cancelled';
@@ -608,6 +609,64 @@ export function createConsole({ api, refresh, selectSession, showError }) {
       ),
     );
     b.append(meta);
+    const usage = state.sessionUsage?.[n.session?.id];
+    if (usage) {
+      if (
+        !usage.cumulative?.hasValue &&
+        !usage.taskCumulative?.hasValue &&
+        !usage.subtree?.total?.hasValue &&
+        usage.context === '未上报'
+      ) {
+        b.append(
+          el(
+            'small',
+            'session-usage is-empty',
+            usage.subtree
+              ? `含 ${usage.subtree.descendantCount} 子任务 · 用量未上报`
+              : '用量未上报',
+          ),
+        );
+      } else {
+        const cum = usage.cumulative;
+        const taskCum = usage.taskCumulative;
+        const sub = usage.subtree;
+        const summary = el(
+          'small',
+          'session-usage',
+          sub
+            ? `总计 ${sub.total.short?.total ?? sub.total.total} · 自身 ${taskCum?.short?.total ?? cum.short?.total ?? cum.total}`
+            : (usage.resets ?? 0) > 0 && taskCum
+              ? `任务 ${taskCum.short?.total ?? taskCum.total} · 会话 ${cum.hasValue ? (cum.short?.total ?? cum.total) : '未上报'}`
+              : `累计 ${cum.short?.total ?? cum.total} · 入 ${cum.short?.input ?? cum.input} / 出 ${cum.short?.output ?? cum.output}`,
+        );
+        summary.title = sub
+          ? `含 ${sub.descendantCount} 个子任务总计：${sub.total.total} tokens；本任务累计：${taskCum?.total ?? cum.total}${(usage.resets ?? 0) > 0 ? `（含 ${usage.resets} 次重置，当前会话 ${cum.total}）` : ''}；上下文 ${usage.context}`
+          : (usage.resets ?? 0) > 0 && taskCum
+            ? `本任务累计（含 ${usage.resets} 次重置${usage.compactions ? ` · ${usage.compactions} 次压缩` : ''}）：${taskCum.total} tokens；当前会话：${cum.total}；上下文 ${usage.context}`
+            : `${cum.scope}（精确：累计 ${cum.total} · 入 ${cum.input} / 出 ${cum.output}）；上下文 ${usage.context}`;
+        b.append(summary);
+        if (usage.context !== '未上报') {
+          const ctxLine = el(
+            'small',
+            'session-usage',
+            `上下文 ${usage.contextShort ?? usage.context}`,
+          );
+          ctxLine.title = usage.context;
+          b.append(ctxLine);
+          if (typeof usage.contextPercent === 'number') {
+            const pct = Math.min(100, Math.max(0, usage.contextPercent));
+            const bar = el('div', 'session-ctx-bar');
+            const fill = el(
+              'div',
+              `session-ctx-fill${pct >= 90 ? ' danger' : pct >= 75 ? ' warn' : ''}`,
+            );
+            if (fill.style) fill.style.width = `${pct.toFixed(1)}%`;
+            bar.append(fill);
+            b.append(bar);
+          }
+        }
+      }
+    }
     if (n.children.length)
       b.append(el('small', 'node-child-count', `${n.children.length} 个直接子任务`));
     if (n.anomaly) b.append(el('small', 'danger', '关系异常'));
@@ -625,6 +684,7 @@ export function createConsole({ api, refresh, selectSession, showError }) {
       state.taskNodes,
       state.tasks,
       state.sessions,
+      state.sessionUsage,
       state.interactions,
       selectedKey,
       query,
@@ -1793,9 +1853,25 @@ export function createExecutionRecords({ api, showError }) {
         more.hidden = !cursor;
       }
       const token = data.tokenInformation;
-      $('records-usage').textContent = token
-        ? `上下文：${token.context} · 消耗：${token.total}。${token.details.map((f) => `${f.label}：${f.value}`).join('；')}`
-        : '原生 Agent 尚未上报本会话的 token 用量。';
+      const recordsUsage = $('records-usage');
+      if (token) {
+        const parts = [
+          `上下文 ${token.contextShort ?? token.context}`,
+          `当前会话 ${token.totalShort ?? token.total}`,
+        ];
+        if ((token.resets ?? 0) > 0 && token.taskCumulative)
+          parts.push(`任务累计 ${token.taskCumulative.short?.total ?? token.taskCumulative.total}`);
+        if (token.subtree)
+          parts.push(
+            `含子任务总计 ${token.subtree.total.short?.total ?? token.subtree.total.total}`,
+          );
+        parts.push(`${token.currentRound?.label ?? '本轮'} ${token.roundShort ?? token.round}`);
+        recordsUsage.textContent = parts.join(' · ');
+        recordsUsage.title = `上下文：${token.context} · 消耗：${token.total}。${token.details.map((f) => `${f.label}：${f.value}`).join('；')}`;
+      } else {
+        recordsUsage.textContent = '原生 Agent 尚未上报本会话的 token 用量。';
+        recordsUsage.title = '';
+      }
       note(
         `已展示 ${unique.length} 项${cursor ? '，可加载更早记录' : ''}。${loadedOlder ? '点击刷新返回最新列表。' : '自动刷新最新记录。'}按本任务查询；聊天卡片仅为摘要，原生输出可能已截断。`,
       );
@@ -2064,6 +2140,568 @@ export function createAgentPlans({ api }) {
       generation++;
       session = undefined;
       loading = false;
+    },
+  };
+}
+
+// The same backend presentation is used by chat cards and this panel. Render
+// every value as text, including model names and historical source metadata.
+export function createTokenUsage({ api }) {
+  const $ = (id) => document.getElementById(id);
+  const element = (tag, text, className) => {
+    const node = document.createElement(tag);
+    if (text !== undefined) node.textContent = text;
+    if (className) node.className = className;
+    return node;
+  };
+  let target,
+    generation = 0,
+    loading = false,
+    cursor,
+    signature = '',
+    runs = [],
+    older = false,
+    currentNativeId,
+    resets = 0;
+  const time = (at) => (at === undefined ? '未上报' : new Date(at).toLocaleString());
+  const shortTime = (at) => {
+    if (at === undefined) return '未上报';
+    const d = new Date(at),
+      now = new Date(),
+      pad = (n) => String(n).padStart(2, '0');
+    const clock = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+    if (
+      d.getFullYear() === now.getFullYear() &&
+      d.getMonth() === now.getMonth() &&
+      d.getDate() === now.getDate()
+    )
+      return clock;
+    const md = `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    return d.getFullYear() === now.getFullYear() ? md : `${d.getFullYear()}-${md}`;
+  };
+  const status = (run) =>
+    ({ running: '执行中', completed: '已完成', interrupted: '已中断', failed: '失败' })[run.status];
+  const metricItem = (label, shortVal, exactVal, titlePrefix = '') => {
+    const item = element('div', undefined, 'usage-kv');
+    item.append(element('span', label));
+    const strong = element('strong', shortVal, shortVal === '未上报' ? 'is-empty' : undefined);
+    if (exactVal && exactVal !== '未上报') strong.title = `${titlePrefix}${exactVal}`;
+    item.append(strong);
+    return item;
+  };
+  const buildCard = ({
+    title,
+    badgeText,
+    badgeClass,
+    totalText,
+    totalExact,
+    empty,
+    primary,
+    breakdown,
+    hint,
+  }) => {
+    const card = element('section', undefined, `usage-card${primary ? ' is-primary' : ''}`);
+    const head = element('div', undefined, 'usage-card-head');
+    const titleBox = element('div', undefined, 'usage-card-title');
+    titleBox.append(element('span', title));
+    if (badgeText) titleBox.append(element('span', badgeText, badgeClass));
+    const totalEl = element('strong', totalText, `usage-total${empty ? ' is-empty' : ''}`);
+    if (totalExact && totalExact !== '未上报') totalEl.title = `精确值：${totalExact} tokens`;
+    head.append(titleBox, totalEl);
+    card.append(head);
+
+    const grid = element('div', undefined, 'usage-grid');
+    const s = breakdown.short ?? breakdown;
+    const cacheReadText =
+      s.cacheRead !== '未上报' && breakdown.cacheRatio && breakdown.cacheRatio !== '未上报'
+        ? `${s.cacheRead} (${breakdown.cacheRatio})`
+        : s.cacheRead;
+    grid.append(
+      metricItem('输入', s.input, breakdown.input, '精确输入（含缓存）：'),
+      metricItem('输出', s.output, breakdown.output, '精确输出（含思考）：'),
+      metricItem('缓存读取', cacheReadText, breakdown.cacheRead, '精确缓存读取：'),
+      metricItem('缓存写入', s.cacheWrite, breakdown.cacheWrite, '精确缓存写入：'),
+    );
+    if (s.reasoning && s.reasoning !== '未上报')
+      grid.append(
+        metricItem('思考明细', s.reasoning, breakdown.reasoning, '精确思考（已含于输出）：'),
+      );
+    card.append(grid);
+    if (hint) card.append(element('p', hint, 'usage-hint'));
+    return card;
+  };
+  const draw = (info) => {
+    currentNativeId = info.currentNativeId;
+    resets = info.resets ?? 0;
+    const compactions = info.compactions ?? 0;
+    const sub = info.subtree;
+    const scopeEl = $('token-usage-scope');
+    if (scopeEl) {
+      scopeEl.textContent = info.totalScopeShort ?? info.cumulative.scope;
+      scopeEl.className = `usage-badge${info.cumulative.partial ? ' is-warn' : ''}`;
+      scopeEl.title = info.cumulative.scope;
+      scopeEl.hidden = false;
+    }
+    const lifecycleEl = $('token-usage-lifecycle');
+    if (lifecycleEl) {
+      const tags = [
+        resets > 0 ? `重置 ${resets} 次` : '',
+        compactions > 0 ? `压缩 ${compactions} 次` : '',
+        sub ? `含 ${sub.descendantCount} 个子任务` : '',
+      ].filter(Boolean);
+      if (tags.length) {
+        lifecycleEl.textContent = tags.join(' · ');
+        lifecycleEl.className = 'usage-badge is-muted';
+        lifecycleEl.hidden = false;
+      } else {
+        lifecycleEl.textContent = '';
+        lifecycleEl.hidden = true;
+      }
+    }
+    const ctxText = info.contextShort
+      ? `${info.contextShort}${info.contextKindLabel ? `（${info.contextKindLabel}）` : ''}`
+      : info.context;
+    const ctxEl = $('token-usage-context');
+    ctxEl.textContent = `当前上下文：${ctxText}`;
+    ctxEl.title = info.context;
+    const ctxMeta = $('token-usage-context-meta');
+    if (ctxMeta) {
+      ctxMeta.textContent = info.contextAt === undefined ? '' : `采样 ${shortTime(info.contextAt)}`;
+      ctxMeta.title = info.contextAt === undefined ? '' : time(info.contextAt);
+    }
+    const progressEl = $('token-usage-progress');
+    if (progressEl) {
+      if (typeof info.contextPercent === 'number') {
+        const pct = Math.min(100, Math.max(0, info.contextPercent));
+        const fill = element(
+          'div',
+          undefined,
+          `usage-bar-fill${pct >= 90 ? ' danger' : pct >= 75 ? ' warn' : ''}`,
+        );
+        if (fill.style) fill.style.width = `${pct.toFixed(1)}%`;
+        progressEl.replaceChildren(fill);
+        progressEl.hidden = false;
+      } else {
+        progressEl.replaceChildren();
+        progressEl.hidden = true;
+      }
+    }
+    const noteEl = $('token-usage-note');
+    const latestAt = info.taskCumulative?.at ?? info.cumulative.at ?? info.contextAt;
+    noteEl.textContent =
+      latestAt !== undefined
+        ? `更新于 ${shortTime(latestAt)}${info.since ? ` · 自 ${shortTime(info.since)} 起采集` : ''}`
+        : info.since
+          ? `自 ${shortTime(info.since)} 起采集`
+          : info.cumulative.scope;
+    noteEl.title = `上下文采样 ${time(info.contextAt)} · ${info.cumulative.scope} · 累计采样 ${time(info.cumulative.at)}${info.since ? ` · 自 ${time(info.since)} 起采集` : ''}`;
+
+    const roundTotalText = info.currentRound.hasValue
+      ? (info.currentRound.short?.total ?? info.currentRound.total)
+      : info.currentRound.status === 'running'
+        ? '等待上报'
+        : '历史未采集';
+    const roundBadge = info.currentRound.runId
+      ? info.currentRound.status === 'running'
+        ? '执行中'
+        : info.currentRound.partial
+          ? '部分统计'
+          : '已确认'
+      : undefined;
+    const roundBadgeClass = info.currentRound.runId
+      ? `record-status ${info.currentRound.status === 'running' ? 'running' : info.currentRound.partial ? 'pending' : 'completed'}`
+      : undefined;
+    const taskCum = info.taskCumulative ?? info.cumulative;
+    const cards = element('div', undefined, 'usage-cards');
+    const sessionCard = buildCard({
+      title: resets > 0 || sub ? '当前会话' : '会话累计',
+      badgeText:
+        resets > 0
+          ? '当前原生上下文'
+          : info.cumulative.partial
+            ? '部分统计'
+            : compactions > 0
+              ? `已压缩 ${compactions} 次`
+              : undefined,
+      badgeClass:
+        resets > 0
+          ? 'usage-badge is-muted'
+          : info.cumulative.partial
+            ? 'record-status pending'
+            : 'usage-badge is-muted',
+      totalText: info.cumulative.hasValue
+        ? (info.cumulative.short?.total ?? info.cumulative.total)
+        : '未上报',
+      totalExact: info.cumulative.total,
+      empty: !info.cumulative.hasValue,
+      breakdown: info.cumulative,
+      hint: info.cumulative.note,
+    });
+    const roundCard = buildCard({
+      title: info.currentRound.label,
+      badgeText: roundBadge,
+      badgeClass: roundBadgeClass,
+      totalText: roundTotalText,
+      totalExact: info.currentRound.total,
+      empty: !info.currentRound.hasValue,
+      breakdown: info.currentRound,
+      hint: info.currentRound.reason ?? info.currentRound.note,
+    });
+    if (sub) {
+      const subBadge = `含 ${sub.descendantCount} 个子任务${sub.recordedDescendants < sub.descendantCount ? `（${sub.recordedDescendants}/${sub.descendantCount} 已采集）` : ''}`;
+      const subHint = [
+        `本任务 ${taskCum.short?.total ?? taskCum.total} + 子任务 ${sub.childrenTotal.short?.total ?? sub.childrenTotal.total}`,
+        sub.total.note,
+      ]
+        .filter(Boolean)
+        .join('；');
+      const taskHint =
+        resets > 0
+          ? [
+              `当前会话 ${info.cumulative.hasValue ? (info.cumulative.short?.total ?? info.cumulative.total) : '未上报'} + 历史重置 ${taskCum.archivedShort ?? taskCum.archivedTotal}`,
+              taskCum.note,
+            ]
+              .filter(Boolean)
+              .join('；')
+          : taskCum.note;
+      cards.append(
+        buildCard({
+          title: '含子任务总计',
+          badgeText: subBadge,
+          badgeClass: sub.partial ? 'record-status pending' : 'usage-badge',
+          totalText: sub.total.hasValue ? (sub.total.short?.total ?? sub.total.total) : '未上报',
+          totalExact: sub.total.total,
+          empty: !sub.total.hasValue,
+          primary: true,
+          breakdown: sub.total,
+          hint: subHint,
+        }),
+        buildCard({
+          title: resets > 0 ? '本任务累计' : '本任务自身',
+          badgeText:
+            resets > 0
+              ? `含 ${resets} 次重置`
+              : compactions > 0
+                ? `已压缩 ${compactions} 次`
+                : taskCum.partial
+                  ? '部分统计'
+                  : undefined,
+          badgeClass: taskCum.partial ? 'record-status pending' : 'usage-badge is-muted',
+          totalText: taskCum.hasValue ? (taskCum.short?.total ?? taskCum.total) : '未上报',
+          totalExact: taskCum.total,
+          empty: !taskCum.hasValue,
+          breakdown: taskCum,
+          hint: taskHint,
+        }),
+      );
+      if (resets > 0) cards.append(sessionCard);
+      cards.append(roundCard);
+    } else if (resets > 0) {
+      const taskHint = [
+        `当前会话 ${info.cumulative.hasValue ? (info.cumulative.short?.total ?? info.cumulative.total) : '未上报'} + 历史重置 ${taskCum.archivedShort ?? taskCum.archivedTotal}`,
+        taskCum.note,
+      ]
+        .filter(Boolean)
+        .join('；');
+      cards.append(
+        buildCard({
+          title: '本任务累计',
+          badgeText: `含 ${resets} 次重置${compactions > 0 ? ` · ${compactions} 次压缩` : ''}`,
+          badgeClass: taskCum.partial ? 'record-status pending' : 'usage-badge',
+          totalText: taskCum.hasValue ? (taskCum.short?.total ?? taskCum.total) : '未上报',
+          totalExact: taskCum.total,
+          empty: !taskCum.hasValue,
+          primary: true,
+          breakdown: taskCum,
+          hint: taskHint,
+        }),
+        sessionCard,
+        roundCard,
+      );
+    } else {
+      cards.append(sessionCard, roundCard);
+    }
+    $('token-usage-summary').replaceChildren(cards);
+
+    const cols = [
+      { title: info.currentRound.label, data: info.currentRound },
+      { title: '当前会话', data: info.cumulative },
+    ];
+    if (resets > 0) cols.push({ title: '本任务累计', data: taskCum });
+    if (sub) cols.push({ title: '含子任务总计', data: sub.total });
+    const table = element('table', undefined, 'usage-table');
+    const header = element('thead'),
+      row = element('tr');
+    for (const title of ['指标（精确值）', ...cols.map((c) => c.title)])
+      row.append(element('th', title));
+    header.append(row);
+    table.append(header);
+    const body = element('tbody');
+    for (const [label, key] of [
+      ['合计', 'total'],
+      ['输入（含缓存）', 'input'],
+      ['输出（含思考）', 'output'],
+      ['缓存读取', 'cacheRead'],
+      ['缓存写入', 'cacheWrite'],
+      ['思考明细', 'reasoning'],
+      ['缓存读取占输入', 'cacheRatio'],
+    ]) {
+      const tr = element('tr');
+      tr.append(element('th', label));
+      for (const col of cols) {
+        const val = col.data[key];
+        tr.append(element('td', val, val === '未上报' ? 'is-empty' : undefined));
+      }
+      body.append(tr);
+    }
+    const foot = element('tr');
+    foot.append(
+      element('th', '统计状态'),
+      element(
+        'td',
+        info.currentRound.runId
+          ? `${info.currentRound.status === 'running' ? '执行中' : '已结束'} · ${info.currentRound.partial ? '部分统计 / 等待确认' : '已确认'}${info.currentRound.reason ? ` · ${info.currentRound.reason}` : ''}`
+          : '历史未采集',
+      ),
+      element('td', info.cumulative.scope),
+    );
+    if (resets > 0) foot.append(element('td', taskCum.scope));
+    if (sub)
+      foot.append(
+        element(
+          'td',
+          `含 ${sub.descendantCount} 子任务（${sub.recordedDescendants}/${sub.descendantCount} 已采集）`,
+        ),
+      );
+    body.append(foot);
+    table.append(body);
+    const tableWrap = $('token-usage-table');
+    if (tableWrap) tableWrap.replaceChildren(table);
+
+    const childrenEl = $('token-usage-children');
+    if (childrenEl) {
+      if (sub?.children?.length) {
+        const wrap = element('div', undefined, 'usage-children');
+        wrap.append(
+          element(
+            'p',
+            `子任务消耗明细（${sub.descendantCount} 个子任务，子任务合计 ${sub.childrenTotal.short?.total ?? sub.childrenTotal.total}）`,
+            'usage-children-title',
+          ),
+        );
+        for (const child of sub.children) {
+          const item = element('div', undefined, 'usage-child-row');
+          if (item.style && child.depth > 1)
+            item.style.paddingLeft = `${Math.min(child.depth - 1, 4) * 14}px`;
+          const head = element('div', undefined, 'usage-child-head');
+          const titleBox = element('div', undefined, 'usage-child-title');
+          titleBox.append(element('strong', child.title), element('span', child.agent, 'tag'));
+          if (child.resets > 0)
+            titleBox.append(element('span', `重置 ${child.resets} 次`, 'usage-badge is-muted'));
+          if (child.compactions > 0)
+            titleBox.append(
+              element('span', `压缩 ${child.compactions} 次`, 'usage-badge is-muted'),
+            );
+          if (child.partial) titleBox.append(element('span', '部分统计', 'usage-badge is-warn'));
+          const totalEl = element(
+            'span',
+            child.task.hasValue ? (child.task.short?.total ?? child.task.total) : '未上报',
+            `usage-child-total${child.task.hasValue ? '' : ' is-empty'}`,
+          );
+          if (child.task.hasValue) totalEl.title = `精确合计：${child.task.total} tokens`;
+          head.append(titleBox, totalEl);
+          item.append(head);
+          const metaText = child.task.hasValue
+            ? `入 ${child.task.short?.input ?? child.task.input} / 出 ${child.task.short?.output ?? child.task.output}${child.resets > 0 ? ` · 当前会话 ${child.session.hasValue ? (child.session.short?.total ?? child.session.total) : '未上报'}` : ''}`
+            : '尚未采集用量';
+          const metaEl = element('p', metaText, 'usage-child-meta');
+          if (child.task.hasValue)
+            metaEl.title = `精确：输入 ${child.task.input} · 输出 ${child.task.output} · 缓存读取 ${child.task.cacheRead} · 缓存写入 ${child.task.cacheWrite}`;
+          item.append(metaEl);
+          wrap.append(item);
+        }
+        childrenEl.replaceChildren(wrap);
+      } else {
+        childrenEl.replaceChildren();
+      }
+    }
+
+    const dl = element('dl', undefined, 'usage-facts');
+    let caliber;
+    for (const f of info.details) {
+      if (f.label === '用量口径') {
+        caliber = f.value;
+        continue;
+      }
+      dl.append(element('dt', f.label), element('dd', f.value));
+    }
+    const detailNodes = [dl];
+    if (caliber) detailNodes.push(element('p', `口径说明：${caliber}`, 'usage-caliber'));
+    $('token-usage-detail').replaceChildren(...detailNodes);
+  };
+  const drawRuns = () => {
+    const nodes = runs.map((run) => {
+      const item = element('section', undefined, 'usage-run');
+      const head = element('div', undefined, 'usage-run-head');
+      const titleBox = element('div', undefined, 'usage-run-title');
+      titleBox.append(
+        element('strong', run.kind === 'compact' ? '压缩' : '对话轮次'),
+        element(
+          'span',
+          status(run),
+          `record-status ${run.status === 'interrupted' ? 'pending' : run.status}`,
+        ),
+      );
+      if (run.partial) titleBox.append(element('span', '部分统计', 'usage-badge is-warn'));
+      if (
+        (run.nativeId && currentNativeId && run.nativeId !== currentNativeId) ||
+        (resets > 0 && !currentNativeId && run.nativeId)
+      )
+        titleBox.append(element('span', '已重置上下文', 'usage-badge is-muted'));
+      titleBox.append(element('span', shortTime(run.sampledAt ?? run.startedAt), 'footnote'));
+      head.append(titleBox);
+      if (run.information) {
+        const totalEl = element(
+          'span',
+          run.information.short?.total ?? run.information.total,
+          'usage-run-total',
+        );
+        totalEl.title = `精确合计：${run.information.total}`;
+        head.append(totalEl);
+      }
+      item.append(head);
+      if (run.information) {
+        const s = run.information.short ?? run.information;
+        const metrics = element('div', undefined, 'usage-run-metrics');
+        const chip = (label, val, exact) => {
+          const span = element(
+            'span',
+            undefined,
+            `usage-chip${val === '未上报' ? ' is-empty' : ''}`,
+          );
+          span.append(element('span', label), element('strong', val));
+          if (exact && exact !== '未上报') span.title = `精确：${exact}`;
+          return span;
+        };
+        metrics.append(
+          chip('输入', s.input, run.information.input),
+          chip('输出', s.output, run.information.output),
+          chip('缓存读', s.cacheRead, run.information.cacheRead),
+          chip('缓存写', s.cacheWrite, run.information.cacheWrite),
+        );
+        if (s.reasoning && s.reasoning !== '未上报')
+          metrics.append(chip('思考', s.reasoning, run.information.reasoning));
+        item.append(metrics);
+      } else {
+        item.append(
+          element(
+            'p',
+            run.status === 'running' ? '等待本轮上报' : '未采集到可靠用量',
+            'usage-hint is-empty',
+          ),
+        );
+      }
+      const metaParts = [
+        run.actualModel ? `模型 ${run.actualModel}` : undefined,
+        run.reason,
+        `轮次 ${run.runId.slice(0, 8)}`,
+      ].filter(Boolean);
+      const meta = element('p', metaParts.join(' · '), 'usage-run-meta');
+      meta.title = `轮次 ${run.runId}${run.nativeId ? ` · 原生会话 ${run.nativeId}` : ''}`;
+      item.append(meta);
+      return item;
+    });
+    $('token-usage-runs').replaceChildren(
+      ...(nodes.length ? nodes : [element('p', '历史逐轮用量尚未采集', 'footnote')]),
+    );
+    $('token-usage-more').hidden = !cursor;
+  };
+  const load = async (append = false) => {
+    if (!target || loading) return;
+    const id = target,
+      version = generation;
+    loading = true;
+    try {
+      const data = await api(
+        `/sessions/${id}/usage?limit=20${append && cursor ? `&before=${cursor}` : ''}`,
+      );
+      if (id !== target || version !== generation) return;
+      const next = JSON.stringify(data.tokenInformation);
+      if (next !== signature) {
+        signature = next;
+        draw(data.tokenInformation);
+      }
+      runs = append
+        ? [...runs, ...data.runs]
+        : older
+          ? [...new Map([...runs, ...data.runs].map((r) => [r.runId, r])).values()].sort(
+              (a, b) => b.cursor - a.cursor,
+            )
+          : data.runs;
+      if (append) older = true;
+      if (!older || append) cursor = data.nextBefore;
+      drawRuns();
+    } catch (error) {
+      if (id === target && version === generation) {
+        signature = '';
+        $('token-usage-note').textContent = `用量读取失败：${error.message}`;
+      }
+    } finally {
+      if (version === generation) loading = false;
+    }
+  };
+  $('token-usage-refresh').onclick = () => {
+    older = false;
+    void load();
+  };
+  $('token-usage-more').onclick = () => void load(true);
+  return {
+    refresh(id) {
+      if (id !== target) {
+        target = id;
+        generation++;
+        loading = false;
+        cursor = undefined;
+        runs = [];
+        older = false;
+        signature = '';
+        currentNativeId = undefined;
+        resets = 0;
+        $('token-usage-context').textContent = '正在读取当前会话用量…';
+        $('token-usage-context').title = '';
+        const ctxMeta = $('token-usage-context-meta');
+        if (ctxMeta) {
+          ctxMeta.textContent = '';
+          ctxMeta.title = '';
+        }
+        const scopeEl = $('token-usage-scope');
+        if (scopeEl) {
+          scopeEl.textContent = '';
+          scopeEl.hidden = true;
+        }
+        const lifecycleEl = $('token-usage-lifecycle');
+        if (lifecycleEl) {
+          lifecycleEl.textContent = '';
+          lifecycleEl.hidden = true;
+        }
+        const progressEl = $('token-usage-progress');
+        if (progressEl) {
+          progressEl.replaceChildren();
+          progressEl.hidden = true;
+        }
+        $('token-usage-note').textContent = '';
+        $('token-usage-note').title = '';
+        $('token-usage-summary').replaceChildren();
+        const tableWrap = $('token-usage-table');
+        if (tableWrap) tableWrap.replaceChildren();
+        const childrenEl = $('token-usage-children');
+        if (childrenEl) childrenEl.replaceChildren();
+        $('token-usage-runs').replaceChildren();
+        $('token-usage-detail').replaceChildren();
+        $('token-usage-more').hidden = true;
+        $('token-usage-history').open = false;
+      }
+      if (id) void load();
     },
   };
 }

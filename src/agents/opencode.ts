@@ -1,4 +1,5 @@
 import { openCodeUsage } from './token-usage.js';
+import { addUsage } from '../core/usage-ledger.js';
 import { TASK_MCP_SERVER } from '../brand.js';
 import { ScopedGrants } from './scoped-grants.js';
 import { approvalChoices, approvalAction } from '../core/approval-decisions.js';
@@ -43,6 +44,8 @@ const eventSchema = z.object({ type: z.string(), properties: z.record(z.string()
 const responseSchema = z.object({
   info: z.object({
     sessionID: z.string(),
+    id: z.string().optional(),
+    parentID: z.string().optional(),
     tokens: z.unknown().optional(),
     error: z
       .object({
@@ -355,6 +358,26 @@ export class OpenCodeAdapter implements AgentAdapter {
       const response = await server.fetch('/event', combined);
       stream = consumeEvents(response, (value) => {
         const event = eventSchema.parse(value);
+        if (event.type === 'message.updated') {
+          const info = event.properties.info as Record<string, unknown> | undefined;
+          if (
+            !info ||
+            info.sessionID !== nativeId ||
+            info.role !== 'assistant' ||
+            typeof info.id !== 'string'
+          )
+            return;
+          const usage = openCodeUsage(info);
+          if (usage)
+            hooks.usage?.({
+              ...usage,
+              sampleId: info.id,
+              ...(typeof info.modelID === 'string' && typeof info.providerID === 'string'
+                ? { actualModel: `${info.providerID}/${info.modelID}` }
+                : {}),
+            });
+          return;
+        }
         if (event.type === 'todo.updated') {
           if (event.properties.sessionID !== nativeId || !Array.isArray(event.properties.todos))
             return;
@@ -450,10 +473,65 @@ export class OpenCodeAdapter implements AgentAdapter {
       );
       combined.throwIfAborted();
       if (result.info.sessionID !== nativeId) throw new Error('OpenCode 返回了其他会话的结果');
+      const usage = openCodeUsage(result.info);
+      if (usage)
+        hooks.usage?.({ ...usage, ...(result.info.id ? { sampleId: result.info.id } : {}) });
+      // Reconcile all messages belonging to the returned user prompt. SSE may
+      // miss events; a final message alone is not a whole-turn total.
+      if (result.info.id && result.info.parentID) {
+        try {
+          const messages = z
+            .array(
+              z.object({
+                info: z
+                  .object({
+                    id: z.string(),
+                    sessionID: z.string(),
+                    role: z.string(),
+                    parentID: z.string().optional(),
+                    time: z.object({ completed: z.number().optional() }).optional(),
+                    error: z.unknown().optional(),
+                  })
+                  .passthrough(),
+              }),
+            )
+            .parse(
+              await server.request(
+                `/session/${encodeURIComponent(nativeId)}/message`,
+                AbortSignal.any([combined, AbortSignal.timeout(3000)]),
+              ),
+            );
+          if (
+            messages.every((m) => m.info.sessionID === nativeId) &&
+            messages.some((m) => m.info.id === result.info.parentID && m.info.role === 'user')
+          ) {
+            const own = new Map(
+              messages
+                .filter(
+                  (m) => m.info.role === 'assistant' && m.info.parentID === result.info.parentID,
+                )
+                .map((m) => [m.info.id, m.info]),
+            );
+            const values = [...own.values()].map((info) => openCodeUsage(info));
+            if (own.has(result.info.id) && values.length && values.every((v) => v?.last)) {
+              const total = values
+                .slice(1)
+                .reduce((sum, v) => addUsage(sum, v!.last!), values[0]!.last!);
+              hooks.usage?.({
+                source: 'opencode',
+                total,
+                totalScope: 'query',
+                complete: [...own.values()].every((info) => !!info.time?.completed && !info.error),
+              });
+            }
+          }
+        } catch {
+          // Statistics are optional: keep partial samples without failing or
+          // replaying an otherwise completed task.
+        }
+      }
       if (result.info.error)
         throw new Error(`OpenCode：${result.info.error.data?.message ?? result.info.error.name}`);
-      const usage = openCodeUsage(result.info);
-      if (usage) hooks.usage?.(usage);
       for (const part of result.parts)
         if (part.type === 'text' && part.text && !part.ignored && !part.synthetic)
           hooks.text(part.text);

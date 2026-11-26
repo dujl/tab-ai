@@ -48,6 +48,8 @@ Session 写入及对应任务同步、任务结果/队列变化使用同一 SQLi
 
 ## 原生 Token 统计
 
-`events.type=usage` 保存归一化 JSON、原生会话 ID 和事件时间，作为历史记录；`sessions.data.tokenUsage` 保存当前原生会话的最新快照（nativeId、at、value）。同一次原生累计快照按覆盖处理，不相加；缓存读取包含在输入中、reasoning 包含在输出中，避免重复统计。不同 Agent 的累计范围通过 totalScope 区分；缺失不当作零。
+`events.type=usage` 保存本次原始归一化采样（不混入旧分项）、runId、原生会话 ID 和事件时间，作为历史记录；`sessions.data.tokenUsage` 保存当前原生会话的最新快照（nativeId、at、value）。同一次原生累计快照按覆盖处理，不相加；缓存读取包含在输入中、reasoning 包含在输出中，避免重复统计。不同 Agent 的累计范围通过 totalScope 区分；缺失不当作零。
 
-`events.type=compaction` 可附本次操作 tokens.nativeId/before/after；`sessions.data.lastCompactionTokens` 保存最近已确认压缩的对比，`contextUsageInvalidated` 标识压缩后或中止后旧占用已失效。读取时校验当前 Agent/nativeId；重置不继承这些快照。统计使用 JSON 字段保存；没有可靠原生 ID 的 usage 事件不能作为当前样本；Codex 和 TRAE CLI 可按当前 Agent/nativeId 只读补查各自原生历史，作为展示覆盖层，不回填会话或改变更新时间，确实缺失时才等待新上报。各自目录及读取边界见 [原生历史统计读取](management-cards.md#原生历史统计读取)。
+`events.type=compaction` 可附本次操作 tokens.nativeId/before/after；`sessions.data.lastCompactionTokens` 保存最近已确认压缩的对比，`contextUsageInvalidated` 标识压缩后或中止后旧占用已失效。读取时校验当前 Agent/nativeId；重置任务上下文前会将当前原生上下文已确认累计归档至 `sessions.data.archivedTokenUsage`（记录重置次数、压缩次数与归档消耗），再清空当前原生快照与 `tokenLedger`，使“当前会话”从新上下文重新计起而“本任务累计”保留跨重置总消耗。统计使用 JSON 字段保存；没有可靠原生 ID 的 usage 事件不能作为当前样本；Codex 和 TRAE CLI 可按当前 Agent/nativeId 只读补查各自原生历史，作为展示覆盖层，不回填会话或改变更新时间，确实缺失时才等待新上报。各自目录及读取边界见 [原生历史统计读取](management-cards.md#原生历史统计读取)。
+
+`usage_runs` 按 `(session_id, run_id)` 保存逐轮/压缩用量、轮初基线、状态、来源和完整性；`usage_samples` 按 `(session_id, run_id, sample_id)` 覆盖消息采样，重复事件不会重复累计。`sessions.data.tokenLedger` 保存会话摘要、原生累计及分段信息、已采集计数和当前轮次。采样、轮次摘要、会话摘要及 usage 事件在同一事务内写入。重启把未完成用量轮次标记为中断和部分统计，不重放执行；读列表和用量接口不更新会话时间。上下文、最近调用和累计分别保留采样时间。

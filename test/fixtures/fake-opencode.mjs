@@ -99,6 +99,43 @@ const server = createServer(async (req, res) => {
     return;
   }
   if (path.endsWith('/message')) {
+    if (mode === 'usage') {
+      const info = (id, input, sessionID = 'ses_created', parentID = 'user_current') => ({
+        id,
+        role: 'assistant',
+        sessionID,
+        parentID,
+        time: { completed: 123 },
+        tokens: { input, output: 10, reasoning: 2, cache: { read: 80, write: 5 } },
+      });
+      const first = info('msg_first', 100),
+        last = info('msg_last', 200);
+      if (req.method === 'GET') {
+        res.end(
+          JSON.stringify([
+            { info: { id: 'user_current', role: 'user', sessionID: 'ses_created' } },
+            { info: first },
+            { info: last },
+            { info: last },
+            { info: info('msg_previous', 900, 'ses_created', 'user_previous') },
+          ]),
+        );
+        return;
+      }
+      for (const value of [
+        first,
+        first,
+        last,
+        info('foreign', 999, 'ses_other'),
+        info('child', 999, 'ses_child'),
+      ])
+        emit('message.updated', { info: value });
+      setTimeout(
+        () => res.end(JSON.stringify({ info: last, parts: [{ type: 'text', text: 'done' }] })),
+        100,
+      );
+      return;
+    }
     if (mode === 'todos') {
       for (const sessionID of ['ses_other', 'ses_child', 'ses_created'])
         emit('todo.updated', {

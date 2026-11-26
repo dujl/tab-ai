@@ -57,11 +57,34 @@ export function informationElements(info: SessionInformation): CardElement[] {
             textBlock(`模型：${field('模型')}`),
             pair(`思考：${field('思考深度')}`, `审批：${field('审批策略')}`),
             textBlock(`目录：${field('工作目录')}`),
+            { tag: 'hr' },
+            heading('Token 用量'),
             textBlock(`上下文：${field('上下文占用')}`),
             textBlock(`消耗：${field('Token 消耗')}`),
+            ...(info.fields.some((f) => f.label === '本任务累计')
+              ? [textBlock(`本任务累计：${field('本任务累计')}`)]
+              : []),
+            ...(info.fields.some((f) => f.label === '含子任务总计')
+              ? [textBlock(`含子任务总计：${field('含子任务总计')}`)]
+              : []),
+            pair(`输入：${field('累计输入')}`, `输出：${field('累计输出')}`),
+            pair(`缓存读取：${field('缓存读取')}`, `缓存写入：${field('缓存写入')}`),
+            textBlock(field('本轮消耗')),
             ...(info.details.find((f) => f.label === '最近压缩对比')
               ? [textBlock(info.details.find((f) => f.label === '最近压缩对比')!.value)]
               : []),
+            {
+              tag: 'collapsible_panel',
+              expanded: false,
+              header: { title: plain('Token 明细 · 本轮与累计') },
+              elements: info.details
+                .filter((f) =>
+                  /用量|累计|本轮|最近一轮|压缩|重置|子任务|采集|缓存|Token|模型|上下文采样/.test(
+                    f.label,
+                  ),
+                )
+                .map((f) => textBlock(`${f.label}：${f.value}`)),
+            },
             {
               tag: 'collapsible_panel',
               expanded: false,

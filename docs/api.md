@@ -104,6 +104,8 @@ API 与 Dashboard 使用同一服务，默认 `http://127.0.0.1:4317`。请求�
 
 工具按 runId/toolId 合并最后快照，审批按真实终态展示；缺失结果不猜测成功。原生待办按当前能力显示，轮次结束不自动完成剩余步骤。报告生成不启动工作任务或改变验收状态。详见 [执行记录](execution-records.md)、[待办](agent-plans.md)、[交付报告](session-reports.md)。
 
+`GET /api/sessions/:id/usage?before=<cursor>&limit=20` 返回 `tokenInformation`、`runs` 和 `nextBefore`；limit 为 1–50。`tokenInformation.cumulative`（当前原生会话）、`taskCumulative`（跨多次重置与压缩的本任务累计）、`currentRound` 与可选 `subtree`（本任务及全部递归子任务总计，单会话查询含 `children` 明细）包含合计、输入、输出、缓存读取/写入、思考明细、缓存读取占输入、作用域、采样时间和完整性；顶层 context/contextAt 表示上下文及其独立采样时间。轮次记录提供执行类型、状态、分项和来源，不公开内部基线。`GET /api/state` 的 `tokenUsage: true` 表示支持用量页，`sessionUsage` 是按会话 ID 索引的已有摘要（含 `taskCumulative` 与不含 `children` 的 `subtree`），不逐会话扫描原生历史；打开单会话用量页时可只读补查 Codex。所有查询沿用 bearer/Host/Origin 边界，不调用模型或改变会话更新时间。
+
 会话 `maintenance` 与 `records` 查询附带 `tokenInformation`，提供与聊天信息区一致的上下文、消耗及口径详情；`maintenance.lastCompaction.tokens` 可包含本次压缩前后计数。`records.usage` 仅在已采集或原生历史补读的快照与当前 Agent/nativeId 匹配时返回，不复用重置前的事件作为当前用量；只读补查不改变管理 revision 和会话更新时间。缺失计数不返回伪造的零或压缩率。
 
 ## Bot 与接入向导
